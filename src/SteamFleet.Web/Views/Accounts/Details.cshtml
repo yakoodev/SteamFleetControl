@@ -1,0 +1,507 @@
+@model AccountDto
+@{
+    ViewData["Title"] = "Карточка аккаунта";
+    var games = ViewData["Games"] as AccountGamesPageResult ?? new AccountGamesPageResult();
+    var parentCandidates = ViewData["ParentCandidates"] as List<AccountDto> ?? [];
+    var childAccounts = ViewData["ChildAccounts"] as List<AccountDto> ?? [];
+    var gamesScope = ViewData["GamesScope"] as string ?? "all";
+    var gamesQuery = ViewData["GamesQuery"] as string ?? string.Empty;
+    var friendInvite = ViewData["FriendInviteLink"] as FriendInviteLinkDto;
+    var friendsSnapshot = ViewData["FriendsSnapshot"] as AccountFriendsSnapshotDto ?? new AccountFriendsSnapshotDto();
+    var friendSourceCandidates = ViewData["FriendSourceCandidates"] as List<AccountDto> ?? [];
+    var passwordChangePending = ViewData["PasswordChangePending"] as bool? ?? false;
+    var pendingPasswordRequestId = ViewData["PasswordChangePendingRequestId"] as string;
+    var pendingPasswordExpiresAt = ViewData["PasswordChangePendingExpiresAt"] as string;
+    var openPasswordConfirmationModal = string.Equals(TempData["PasswordConfirmationModal"] as string, "1", StringComparison.Ordinal);
+    pendingPasswordRequestId ??= TempData["PasswordConfirmationRequestId"] as string;
+    pendingPasswordExpiresAt ??= TempData["PasswordConfirmationExpiresAt"] as string;
+    var currentGamesPage = games.Page <= 0 ? 1 : games.Page;
+    var gamesTotalPages = games.PageSize > 0
+        ? Math.Max(1, (int)Math.Ceiling(games.TotalCount / (double)games.PageSize))
+        : 1;
+}
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+            <h1 class="sf-title">@Model.LoginName</h1>
+            <div class="sf-subtitle">@Model.DisplayName</div>
+            <div class="sf-subtitle">SteamId: @Model.SteamId64</div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Edit" asp-route-id="@Model.Id">Редактировать</a>
+            <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Index">Назад</a>
+            <form asp-action="Archive" asp-route-id="@Model.Id" method="post">
+                <button class="btn sf-btn sf-btn-danger btn-sm" type="submit">Архивировать</button>
+            </form>
+        </div>
+    </div>
+    <div class="sf-card-body">
+        <div class="sf-tab-nav">
+            <a class="sf-tab" href="#overview">Обзор</a>
+            <a class="sf-tab" href="#security">Безопасность</a>
+            <a class="sf-tab" href="#family">Семья</a>
+            <a class="sf-tab" href="#friends">Друзья</a>
+            <a class="sf-tab" href="#games">Игры</a>
+        </div>
+        <div class="sf-grid">
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Статус</div>
+                    <div class="sf-kpi-value">@Model.Status</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Игр в кэше</div>
+                    <div class="sf-kpi-value">@Model.GamesCount</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Семья</div>
+                    <div class="sf-kpi-value">@Model.FamilyAccountsCount</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Последний успех</div>
+                    <div class="sf-kpi-value fs-6">@Model.LastSuccessAt?.ToString("g")</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="overview" class="sf-card mb-3">
+    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Обзор</h2></div>
+    <div class="sf-card-body">
+        <table class="table table-sm align-middle mb-0">
+            <tr><th>ID</th><td>@Model.Id</td></tr>
+            <tr><th>Email</th><td>@Model.Email</td></tr>
+            <tr><th>Папка</th><td>@Model.FolderName</td></tr>
+            <tr><th>Теги</th><td>@string.Join(", ", Model.Tags)</td></tr>
+            <tr><th>Profile URL</th><td>@Model.ProfileUrl</td></tr>
+            <tr><th>Синк игр</th><td>@Model.GamesLastSyncAt?.ToString("g")</td></tr>
+            <tr><th>Последняя проверка</th><td>@Model.LastCheckAt?.ToString("g")</td></tr>
+            <tr><th>Ошибка</th><td>@Model.LastErrorAt?.ToString("g")</td></tr>
+            <tr><th>Заметка</th><td><pre>@Model.Note</pre></td></tr>
+        </table>
+    </div>
+</section>
+
+<section id="security" class="sf-card mb-3">
+    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Безопасность</h2></div>
+    <div class="sf-card-body">
+        <div class="row g-3">
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Авторизация Steam</div>
+                <form asp-action="Authenticate" asp-route-id="@Model.Id" method="post" class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label" for="auth_password">Пароль Steam (если не хранится в сервисе)</label>
+                        <input id="auth_password" name="Password" type="password" class="form-control" autocomplete="new-password" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="auth_shared">Shared Secret</label>
+                        <input id="auth_shared" name="SharedSecret" class="form-control" />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="auth_guard">Guard Code (email/mobile)</label>
+                        <input id="auth_guard" name="GuardCode" class="form-control" />
+                    </div>
+                    <div class="col-12 form-check">
+                        <input id="auth_device" class="form-check-input" type="checkbox" name="AllowDeviceConfirmation" value="true" checked />
+                        <label class="form-check-label" for="auth_device">Разрешить подтверждение устройства</label>
+                    </div>
+                    <div class="col-12 d-flex gap-2">
+                        <button class="btn sf-btn sf-btn-primary" type="submit">Авторизовать</button>
+                    </div>
+                </form>
+                <div class="d-flex gap-2 mt-2">
+                    <form asp-action="ValidateSession" asp-route-id="@Model.Id" method="post">
+                        <button class="btn sf-btn sf-btn-secondary" type="submit">Validate session</button>
+                    </form>
+                    <form asp-action="RefreshSession" asp-route-id="@Model.Id" method="post">
+                        <button class="btn sf-btn sf-btn-secondary" type="submit">Refresh session</button>
+                    </form>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Смена пароля и завершение сессий</div>
+                <div class="alert alert-dark border-secondary mb-3">
+                    Схема работы: <strong>1)</strong> запускаете смену пароля, <strong>2)</strong> получаете код на почту,
+                    <strong>3)</strong> вводите код в модальном окне и подтверждаете.
+                </div>
+                <form asp-action="ChangePassword" asp-route-id="@Model.Id" method="post" class="row g-2 mb-3">
+                    <div class="col-12">
+                        <label class="form-label" for="newPassword">Новый пароль (если пусто, будет сгенерирован)</label>
+                        <input id="newPassword" name="NewPassword" class="form-control" autocomplete="off" />
+                    </div>
+                    <div class="col-12 form-check">
+                        <input id="genIfEmpty" class="form-check-input" type="checkbox" name="GenerateIfEmpty" value="true" checked />
+                        <label class="form-check-label" for="genIfEmpty">Генерировать пароль автоматически</label>
+                    </div>
+                    <div class="col-12 form-check">
+                        <input id="deauthAfter" class="form-check-input" type="checkbox" name="DeauthorizeAfterChange" value="true" checked />
+                        <label class="form-check-label" for="deauthAfter">После смены завершить все сессии</label>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn sf-btn sf-btn-primary" type="submit">Сменить пароль (шаг 1)</button>
+                    </div>
+                </form>
+                @if (passwordChangePending && !string.IsNullOrWhiteSpace(pendingPasswordRequestId))
+                {
+                    <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            Ожидается код подтверждения из письма Steam.
+                            @if (!string.IsNullOrWhiteSpace(pendingPasswordExpiresAt))
+                            {
+                                <span>Действительно до: @pendingPasswordExpiresAt</span>
+                            }
+                        </div>
+                        <button class="btn sf-btn sf-btn-secondary" type="button" data-bs-toggle="modal" data-bs-target="#passwordConfirmModal">
+                            Ввести код
+                        </button>
+                    </div>
+                }
+                <form asp-action="DeauthorizeSessions" asp-route-id="@Model.Id" method="post">
+                    <button class="btn sf-btn sf-btn-danger" type="submit">Завершить все сессии через Steam Guard</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="family" class="sf-card mb-3">
+    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Семейная группа</h2></div>
+    <div class="sf-card-body">
+        <div class="row g-3">
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Текущий parent</div>
+                @if (Model.ParentAccountId is not null)
+                {
+                    <div class="mb-2">
+                        <span class="sf-badge sf-badge-family">Parent: @Model.ParentLoginName</span>
+                    </div>
+                    <form asp-action="RemoveParent" asp-route-id="@Model.Id" method="post">
+                        <button class="btn sf-btn sf-btn-secondary" type="submit">Убрать parent</button>
+                    </form>
+                }
+                else
+                {
+                    <div class="sf-subtitle">Parent не назначен.</div>
+                }
+            </div>
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Назначить parent</div>
+                <form asp-action="AssignParent" asp-route-id="@Model.Id" method="post" class="d-flex gap-2 flex-column">
+                    <input type="search" id="parentSearch" class="form-control" placeholder="Поиск main по login / steamid / display" />
+                    <div class="d-flex gap-2">
+                        <select class="form-select" name="ParentAccountId" id="parentSelect" required>
+                            <option value="">Выберите главный аккаунт</option>
+                            @foreach (var candidate in parentCandidates)
+                            {
+                                <option value="@candidate.Id"
+                                        data-search="@($"{candidate.LoginName} {candidate.DisplayName} {candidate.SteamId64}".ToLowerInvariant())">
+                                    @candidate.LoginName (@candidate.DisplayName) @candidate.SteamId64
+                                </option>
+                            }
+                        </select>
+                        <button class="btn sf-btn sf-btn-primary" type="submit">Назначить</button>
+                    </div>
+                </form>
+            </div>
+            <div class="col-12">
+                <div class="sf-subtitle mb-2">Дочерние аккаунты</div>
+                @if (childAccounts.Count == 0)
+                {
+                    <div class="sf-subtitle">Нет дочерних аккаунтов.</div>
+                }
+                else
+                {
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var child in childAccounts)
+                        {
+                            <a class="sf-badge sf-badge-owned" asp-action="Details" asp-route-id="@child.Id">@child.LoginName</a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="friends" class="sf-card mb-3">
+    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Друзья и invite links</h2></div>
+    <div class="sf-card-body">
+        <div class="row g-3">
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Quick invite link</div>
+                @if (!string.IsNullOrWhiteSpace(friendInvite?.InviteUrl))
+                {
+                    <div class="mb-2">
+                        <a href="@friendInvite.InviteUrl" target="_blank">@friendInvite.InviteUrl</a>
+                    </div>
+                    <div class="sf-subtitle mb-2">Синхронизирован: @friendInvite.LastSyncedAt?.ToString("g")</div>
+                }
+                else
+                {
+                    <div class="sf-subtitle mb-2">Invite link пока не синхронизирован.</div>
+                }
+                <form asp-action="SyncFriendInviteLink" asp-route-id="@Model.Id" method="post">
+                    <button class="btn sf-btn sf-btn-primary" type="submit">Синхронизировать invite link</button>
+                </form>
+            </div>
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Принять invite link</div>
+                <form asp-action="AcceptFriendInvite" asp-route-id="@Model.Id" method="post" class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label" for="sourceAccountId">Аккаунт-источник (опционально)</label>
+                        <select id="sourceAccountId" name="SourceAccountId" class="form-select">
+                            <option value="">Выберите аккаунт, чтобы взять его invite-link автоматически</option>
+                            @foreach (var source in friendSourceCandidates)
+                            {
+                                var sourceInvite = source.Metadata.GetValueOrDefault("friends.invite.url");
+                                var inviteInfo = string.IsNullOrWhiteSpace(sourceInvite) ? "без синка invite" : "invite готов";
+                                <option value="@source.Id"
+                                        data-invite="@sourceInvite">
+                                    @source.LoginName (@source.DisplayName) - @inviteInfo
+                                </option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="inviteUrl">Invite URL</label>
+                        <input id="inviteUrl" name="InviteUrl" class="form-control" placeholder="https://s.team/p/.../... (или оставьте пустым при выборе источника)" />
+                        <div class="form-text">Сценарий: выберите аккаунт-источник и нажмите «Принять приглашение», сервис сам выполнит «получить ссылку -> применить ссылку».</div>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn sf-btn sf-btn-secondary" type="submit">Принять приглашение</button>
+                    </div>
+                </form>
+            </div>
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="sf-subtitle">Список друзей</div>
+                    <form asp-action="RefreshFriends" asp-route-id="@Model.Id" method="post">
+                        <button class="btn sf-btn sf-btn-primary btn-sm" type="submit">Обновить друзей</button>
+                    </form>
+                </div>
+                @if (friendsSnapshot.Friends.Count == 0)
+                {
+                    <div class="sf-subtitle">Друзья не загружены.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                            <tr>
+                                <th>SteamId</th>
+                                <th>Имя</th>
+                                <th>Профиль</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var friend in friendsSnapshot.Friends)
+                            {
+                                <tr>
+                                    <td>@friend.SteamId64</td>
+                                    <td>@friend.PersonaName</td>
+                                    <td><a href="@friend.ProfileUrl" target="_blank">@friend.ProfileUrl</a></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="games" class="sf-card">
+    <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h2 class="sf-title h5 mb-0">Игры (Owned + FamilyGroup)</h2>
+        <form asp-action="RefreshGames" asp-route-id="@Model.Id" method="post">
+            <button class="btn sf-btn sf-btn-primary btn-sm" type="submit">Refresh games</button>
+        </form>
+    </div>
+    <div class="sf-card-body">
+        <form method="get" asp-action="Details" asp-route-id="@Model.Id" class="row g-2 mb-3">
+            <div class="col-md-4">
+                <input class="form-control" name="q" value="@gamesQuery" placeholder="Поиск по названию игры" />
+            </div>
+            <div class="col-md-3">
+                <select name="scope" class="form-select">
+                    <option value="all" selected="@(gamesScope == "all")">all</option>
+                    <option value="owned" selected="@(gamesScope == "owned")">owned</option>
+                    <option value="family" selected="@(gamesScope == "family")">family</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input class="form-control" name="pageSize" value="@games.PageSize" type="number" min="1" max="200" />
+            </div>
+            <div class="col-md-2">
+                <button class="btn sf-btn sf-btn-secondary w-100" type="submit">Показать</button>
+            </div>
+        </form>
+
+        @if (!string.IsNullOrWhiteSpace(Model.ProfileUrl))
+        {
+            <p class="sf-subtitle">Профиль: <a href="@Model.ProfileUrl" target="_blank">@Model.ProfileUrl</a></p>
+        }
+
+        @if (games.TotalCount == 0)
+        {
+            <div class="sf-empty">Список игр пуст. Нажмите <strong>Refresh games</strong>.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead>
+                    <tr>
+                        <th>AppId</th>
+                        <th>Название</th>
+                        <th>Источник</th>
+                        <th>Доступность</th>
+                        <th>Playtime (min)</th>
+                        <th>Обновлено</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var game in games.Items)
+                    {
+                        <tr>
+                            <td>@game.AppId</td>
+                            <td>@game.Name</td>
+                            <td>@game.SourceLoginName</td>
+                            <td>
+                                <span class="sf-badge @(game.Availability == AccountGameAvailability.Owned ? "sf-badge-owned" : "sf-badge-family")">
+                                    @game.Availability
+                                </span>
+                            </td>
+                            <td>@game.PlaytimeMinutes</td>
+                            <td>@game.LastSyncedAt.ToString("g")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="sf-subtitle">Показано @games.Items.Count из @games.TotalCount</div>
+                <div class="d-flex align-items-center gap-2">
+                    <a class="btn sf-btn sf-btn-secondary btn-sm @(currentGamesPage <= 1 ? "disabled" : string.Empty)"
+                       asp-action="Details"
+                       asp-route-id="@Model.Id"
+                       asp-route-scope="@gamesScope"
+                       asp-route-q="@gamesQuery"
+                       asp-route-page="@(Math.Max(1, currentGamesPage - 1))"
+                       asp-route-pageSize="@games.PageSize">Назад</a>
+                    <span class="sf-subtitle">Страница @currentGamesPage / @gamesTotalPages</span>
+                    <a class="btn sf-btn sf-btn-secondary btn-sm @(currentGamesPage >= gamesTotalPages ? "disabled" : string.Empty)"
+                       asp-action="Details"
+                       asp-route-id="@Model.Id"
+                       asp-route-scope="@gamesScope"
+                       asp-route-q="@gamesQuery"
+                       asp-route-page="@(Math.Min(gamesTotalPages, currentGamesPage + 1))"
+                       asp-route-pageSize="@games.PageSize">Вперёд</a>
+                </div>
+            </div>
+        }
+    </div>
+</section>
+
+<div class="modal fade" id="passwordConfirmModal" tabindex="-1" aria-labelledby="passwordConfirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-light border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="passwordConfirmModalLabel">Подтверждение смены пароля</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form asp-action="ChangePassword" asp-route-id="@Model.Id" method="post">
+                <div class="modal-body">
+                    @if (string.IsNullOrWhiteSpace(pendingPasswordRequestId))
+                    {
+                        <div class="alert alert-warning mb-0">
+                            Активный запрос не найден. Сначала запустите смену пароля (шаг 1).
+                        </div>
+                    }
+                    else
+                    {
+                        <input type="hidden" name="ConfirmationRequestId" value="@pendingPasswordRequestId" />
+                        <div class="mb-2">
+                            <label class="form-label" for="confirmationCode">Код из письма Steam</label>
+                            <input id="confirmationCode" name="ConfirmationCode" class="form-control" autocomplete="one-time-code" required />
+                            <div class="form-text">Код обычно приходит на email аккаунта. Введите его без пробелов.</div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn sf-btn sf-btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn sf-btn sf-btn-primary" @(string.IsNullOrWhiteSpace(pendingPasswordRequestId) ? "disabled" : null)>Подтвердить и сменить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts
+{
+    <script>
+        (() => {
+            const searchInput = document.getElementById("parentSearch");
+            const select = document.getElementById("parentSelect");
+            if (!searchInput || !select) {
+                return;
+            }
+
+            searchInput.addEventListener("input", () => {
+                const needle = searchInput.value.trim().toLowerCase();
+                Array.from(select.options).forEach((option, index) => {
+                    if (index === 0) {
+                        option.hidden = false;
+                        return;
+                    }
+
+                    const haystack = (option.dataset.search || option.textContent || "").toLowerCase();
+                    option.hidden = needle.length > 0 && !haystack.includes(needle);
+                });
+            });
+        })();
+
+        (() => {
+            const sourceSelect = document.getElementById("sourceAccountId");
+            const inviteInput = document.getElementById("inviteUrl");
+            if (!sourceSelect || !inviteInput) {
+                return;
+            }
+
+            sourceSelect.addEventListener("change", () => {
+                const option = sourceSelect.options[sourceSelect.selectedIndex];
+                const invite = option?.dataset?.invite;
+                if (!invite || inviteInput.value.trim().length > 0) {
+                    return;
+                }
+
+                inviteInput.value = invite;
+            });
+        })();
+
+        (() => {
+            const shouldOpen = @((openPasswordConfirmationModal ? "true" : "false"));
+            if (!shouldOpen) {
+                return;
+            }
+
+            const modalEl = document.getElementById("passwordConfirmModal");
+            if (!modalEl || typeof bootstrap === "undefined" || !bootstrap.Modal) {
+                return;
+            }
+
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        })();
+    </script>
+}

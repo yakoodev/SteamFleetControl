@@ -1,0 +1,87 @@
+# ------------------------------
+# Build artifacts (.NET)
+# ------------------------------
+**/[Bb]in/
+**/[Oo]bj/
+**/[Dd]ebug/
+**/[Rr]elease/
+**/TestResults/
+**/BenchmarkDotNet.Artifacts/
+artifacts/
+out/
+publish/
+
+# NuGet
+*.nupkg
+*.snupkg
+*.nuspec
+packages/
+
+# Test & coverage
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+
+# ------------------------------
+# IDE / Editor
+# ------------------------------
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# VS Code: ignore local settings, keep shared recommendations if needed
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# ------------------------------
+# OS junk
+# ------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------
+# Logs / temp
+# ------------------------------
+*.log
+*.tmp
+*.bak
+*.pid
+logs/
+temp/
+
+# ------------------------------
+# Environment & secrets
+# ------------------------------
+.env
+.env.*
+!.env.example
+*.local.json
+secrets*.json
+
+# ASP.NET local user-secrets or generated certs
+**/secrets/
+**/*.pfx
+
+# ------------------------------
+# Docker / local infra leftovers
+# ------------------------------
+.docker/
+docker-data/
+
+# ------------------------------
+# Frontend (if added later)
+# ------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

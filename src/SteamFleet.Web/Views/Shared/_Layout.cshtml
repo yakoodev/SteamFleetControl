@@ -1,0 +1,66 @@
+@using SteamFleet.Persistence.Helpers
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - SteamFleet</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+@{
+    var canUseAdminTools = User.Identity?.IsAuthenticated == true &&
+                           (User.IsInRole(Roles.SuperAdmin) || User.IsInRole(Roles.Admin));
+}
+<div class="sf-bg-glow"></div>
+<header class="sf-topbar">
+    <div class="container-fluid d-flex align-items-center justify-content-between gap-3">
+        <a class="sf-brand" asp-controller="Accounts" asp-action="Index">
+            <span class="sf-brand-mark">SF</span>
+            <span class="sf-brand-text">SteamFleet Control</span>
+        </a>
+        <nav class="sf-nav d-flex align-items-center gap-2 flex-wrap">
+            <a class="sf-nav-link" asp-controller="Accounts" asp-action="Index">Аккаунты</a>
+            <a class="sf-nav-link" asp-controller="Jobs" asp-action="Index">Задачи</a>
+            <a class="sf-nav-link" asp-controller="Audit" asp-action="Index">Аудит</a>
+            @if (canUseAdminTools)
+            {
+                <a class="sf-nav-link" href="/swagger">Swagger</a>
+                <a class="sf-nav-link" href="/hangfire">Hangfire</a>
+            }
+        </nav>
+        <div class="d-flex align-items-center gap-2">
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <span class="sf-user">@User.Identity.Name</span>
+                <form asp-controller="Auth" asp-action="Logout" method="post" class="d-inline">
+                    <button type="submit" class="btn sf-btn sf-btn-danger btn-sm">Выйти</button>
+                </form>
+            }
+            else
+            {
+                <a class="btn sf-btn sf-btn-primary btn-sm" asp-controller="Auth" asp-action="Login">Войти</a>
+            }
+        </div>
+    </div>
+</header>
+
+<main class="container-fluid sf-main">
+    @if (TempData["Success"] is string success)
+    {
+        <div class="sf-alert sf-alert-success">@success</div>
+    }
+    @if (TempData["Error"] is string error)
+    {
+        <div class="sf-alert sf-alert-danger">@error</div>
+    }
+
+    @RenderBody()
+</main>
+
+<script src="~/lib/jquery/dist/jquery.min.js"></script>
+<script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

@@ -1,0 +1,121 @@
+@model AccountUpsertRequest
+@{
+    ViewData["Title"] = "Создать аккаунт";
+}
+
+<section class="sf-card">
+    <div class="sf-card-head">
+        <h1 class="sf-title">Новый Steam-аккаунт</h1>
+        <div class="sf-subtitle">Поддержка login/password, maFile, Guard и живой сессии Steam</div>
+    </div>
+    <div class="sf-card-body">
+        <div class="sf-alert sf-alert-success mb-3">
+            <strong>Подсказка по добавлению:</strong> сначала сохраните карточку с login + секретами,
+            затем откройте карточку аккаунта и нажмите <strong>Авторизовать</strong>, чтобы записать актуальную Steam-session.
+        </div>
+        <form asp-action="CreatePost" method="post" class="sf-grid">
+            <div class="sf-col-12"><h2 class="sf-title h6 mb-0">1. Базовые данные</h2></div>
+            <div class="sf-col-3">
+                <label asp-for="LoginName" class="form-label">Login</label>
+                <input asp-for="LoginName" class="form-control" required autocomplete="off" />
+            </div>
+            <div class="sf-col-3">
+                <label asp-for="Password" class="form-label">Пароль Steam</label>
+                <input asp-for="Password" type="password" class="form-control" autocomplete="new-password" />
+            </div>
+            <div class="sf-col-3">
+                <label asp-for="DisplayName" class="form-label">Display Name</label>
+                <input asp-for="DisplayName" class="form-control" />
+            </div>
+            <div class="sf-col-3">
+                <label asp-for="Email" class="form-label">Почта</label>
+                <input asp-for="Email" class="form-control" autocomplete="off" />
+            </div>
+
+            <div class="sf-col-12"><h2 class="sf-title h6 mb-0 mt-2">2. Steam Guard и секреты</h2></div>
+            <div class="sf-col-4">
+                <label asp-for="SharedSecret" class="form-label">Shared Secret (base64)</label>
+                <input asp-for="SharedSecret" class="form-control" autocomplete="off" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="IdentitySecret" class="form-label">Identity Secret (base64)</label>
+                <input asp-for="IdentitySecret" class="form-control" autocomplete="off" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="RecoveryPayload" class="form-label">GuardData (опционально)</label>
+                <input asp-for="RecoveryPayload" class="form-control" autocomplete="off" />
+            </div>
+            <div class="sf-col-12">
+                <label class="form-label" for="maFile">Импорт maFile (.json)</label>
+                <input id="maFile" type="file" class="form-control" accept=".json,application/json" />
+                <div class="sf-subtitle mt-1">Если выбрать maFile, сервис заполнит `LoginName`, `SharedSecret`, `IdentitySecret` автоматически.</div>
+            </div>
+
+            <div class="sf-col-12"><h2 class="sf-title h6 mb-0 mt-2">3. Организация и сервисные поля</h2></div>
+            <div class="sf-col-4">
+                <label asp-for="FolderName" class="form-label">Папка</label>
+                <input asp-for="FolderName" class="form-control" />
+            </div>
+            <div class="sf-col-4">
+                <label class="form-label">Теги (через запятую, `,`)</label>
+                <input name="Tags" class="form-control" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="Proxy" class="form-label">Proxy (опционально)</label>
+                <input asp-for="Proxy" class="form-control" />
+            </div>
+            <div class="sf-col-6">
+                <label asp-for="SessionPayload" class="form-label">Session payload (если уже есть валидная session)</label>
+                <textarea asp-for="SessionPayload" rows="3" class="form-control"></textarea>
+            </div>
+            <div class="sf-col-6">
+                <label asp-for="Note" class="form-label">Примечание</label>
+                <textarea asp-for="Note" rows="3" class="form-control"></textarea>
+            </div>
+
+            <div class="sf-col-12 d-flex gap-2">
+                <button class="btn sf-btn sf-btn-primary" type="submit">Создать</button>
+                <a class="btn sf-btn sf-btn-secondary" asp-action="Index">Назад</a>
+            </div>
+        </form>
+    </div>
+</section>
+
+<script>
+    (() => {
+        const fileInput = document.getElementById("maFile");
+        const shared = document.getElementById("SharedSecret");
+        const identity = document.getElementById("IdentitySecret");
+        const login = document.getElementById("LoginName");
+
+        if (!fileInput) {
+            return;
+        }
+
+        fileInput.addEventListener("change", async () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                return;
+            }
+
+            try {
+                const raw = await file.text();
+                const data = JSON.parse(raw);
+
+                if (shared && !shared.value && typeof data.shared_secret === "string") {
+                    shared.value = data.shared_secret;
+                }
+
+                if (identity && !identity.value && typeof data.identity_secret === "string") {
+                    identity.value = data.identity_secret;
+                }
+
+                if (login && !login.value && typeof data.account_name === "string") {
+                    login.value = data.account_name;
+                }
+            } catch {
+                alert("Не удалось распарсить maFile JSON. Проверьте формат файла.");
+            }
+        });
+    })();
+</script>

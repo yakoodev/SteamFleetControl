@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: steamfleet-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: steamfleet
+      POSTGRES_USER: steamfleet
+      POSTGRES_PASSWORD: steamfleet
+    ports:
+      - "5432:5432"
+    volumes:
+      - steamfleet-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steamfleet -d steamfleet"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: steamfleet-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - steamfleet-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: steamfleet-web
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
+      ConnectionStrings__Redis: redis:6379
+      POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
+      REDIS_CONNECTION: redis:6379
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234}
+      SECRETS_MASTER_KEY_B64: ${SECRETS_MASTER_KEY_B64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: steamfleet-worker
+    command: ["sh", "-c", "sleep 10 && dotnet SteamFleet.Worker.dll"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    environment:
+      POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
+      ConnectionStrings__Redis: redis:6379
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234}
+      SECRETS_MASTER_KEY_B64: ${SECRETS_MASTER_KEY_B64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      WORKER_COUNT: ${WORKER_COUNT:-10}
+
+volumes:
+  steamfleet-postgres-data:
+  steamfleet-redis-data:

@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SteamFleet.Api/SteamFleet.Api.csproj" />
+    <Project Path="src/SteamFleet.Application/SteamFleet.Application.csproj" />
+    <Project Path="src/SteamFleet.Contracts/SteamFleet.Contracts.csproj" />
+    <Project Path="src/SteamFleet.Domain/SteamFleet.Domain.csproj" />
+    <Project Path="src/SteamFleet.Integrations.Steam/SteamFleet.Integrations.Steam.csproj" />
+    <Project Path="src/SteamFleet.Persistence/SteamFleet.Persistence.csproj" />
+    <Project Path="src/SteamFleet.Web/SteamFleet.Web.csproj" />
+    <Project Path="src/SteamFleet.Worker/SteamFleet.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SteamFleet.IntegrationTests/SteamFleet.IntegrationTests.csproj" />
+    <Project Path="tests/SteamFleet.UnitTests/SteamFleet.UnitTests.csproj" />
+  </Folder>
+</Solution>

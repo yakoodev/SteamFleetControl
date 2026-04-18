@@ -1,0 +1,154 @@
+@model AccountsPageResult
+@{
+    ViewData["Title"] = "Аккаунты";
+    var filter = ViewData["Filter"] as AccountFilterRequest ?? new AccountFilterRequest();
+    var familyMainOptions = ViewData["FamilyMainOptions"] as List<AccountDto> ?? [];
+}
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1 class="sf-title">Каталог Steam-аккаунтов</h1>
+            <div class="sf-subtitle">Управление профилями, семейными группами, сессиями и безопасностью</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn sf-btn sf-btn-primary" asp-action="Create">Добавить аккаунт</a>
+            <a class="btn sf-btn sf-btn-secondary"
+               asp-action="Export"
+               asp-route-query="@filter.Query"
+               asp-route-status="@filter.Status"
+               asp-route-tag="@filter.Tag"
+               asp-route-familyGroup="@filter.FamilyGroup">Экспорт CSV</a>
+        </div>
+    </div>
+    <div class="sf-card-body">
+        <form method="get" class="row g-2">
+            <div class="col-xl-3 col-md-6">
+                <input class="form-control" name="Query" value="@filter.Query" placeholder="Поиск по login/email/SteamId" />
+            </div>
+            <div class="col-xl-2 col-md-6">
+                <select class="form-select" name="Status">
+                    <option value="">Все статусы</option>
+                    @foreach (var status in Enum.GetValues<AccountStatus>())
+                    {
+                        <option value="@status" selected="@(filter.Status == status)">@status</option>
+                    }
+                </select>
+            </div>
+            <div class="col-xl-2 col-md-6">
+                <input class="form-control" name="Tag" value="@filter.Tag" placeholder="Тег" />
+            </div>
+            <div class="col-xl-3 col-md-6">
+                <select class="form-select" name="FamilyGroup">
+                    <option value="" selected="@string.IsNullOrWhiteSpace(filter.FamilyGroup)">Все семейные группы</option>
+                    <option value="ungrouped" selected="@(string.Equals(filter.FamilyGroup, "ungrouped", StringComparison.OrdinalIgnoreCase))">Без группы</option>
+                    <option value="main" selected="@(string.Equals(filter.FamilyGroup, "main", StringComparison.OrdinalIgnoreCase))">Главные аккаунты</option>
+                    @foreach (var main in familyMainOptions)
+                    {
+                        <option value="@main.Id" selected="@(string.Equals(filter.FamilyGroup, main.Id.ToString(), StringComparison.OrdinalIgnoreCase))">
+                            @main.LoginName (@main.DisplayName)
+                        </option>
+                    }
+                </select>
+            </div>
+            <div class="col-xl-2 col-md-6">
+                <button class="btn sf-btn sf-btn-primary w-100" type="submit">Применить</button>
+            </div>
+            <div class="col-xl-2 col-md-12"></div>
+        </form>
+        <form asp-action="Import" method="post" enctype="multipart/form-data" class="d-flex gap-2 mt-2">
+            <input class="form-control" type="file" name="file" accept=".csv,.json" required />
+            <button class="btn sf-btn sf-btn-secondary" type="submit">Импорт</button>
+        </form>
+    </div>
+</section>
+
+<section class="sf-card">
+    <div class="sf-card-head d-flex justify-content-between align-items-center">
+        <h2 class="sf-title h5 mb-0">Список аккаунтов</h2>
+        <span class="sf-badge sf-badge-muted">Найдено: @Model.TotalCount</span>
+    </div>
+    <div class="sf-card-body">
+        @if (Model.Items.Count == 0)
+        {
+            <div class="sf-empty">Совпадений не найдено.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table align-middle table-hover">
+                    <thead>
+                    <tr>
+                        <th>Аккаунт</th>
+                        <th>Профиль</th>
+                        <th>Семья</th>
+                        <th>Игры</th>
+                        <th>Статус</th>
+                        <th>Синхронизация</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var account in Model.Items)
+                    {
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">@account.LoginName</div>
+                                <div class="sf-subtitle">@account.DisplayName</div>
+                                <div class="sf-subtitle">@account.Email</div>
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(account.ProfileUrl))
+                                {
+                                    <a href="@account.ProfileUrl" target="_blank">Открыть профиль</a>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(account.SteamId64))
+                                {
+                                    <a href="https://steamcommunity.com/profiles/@account.SteamId64" target="_blank">Профиль по SteamId</a>
+                                }
+                                else
+                                {
+                                    <span class="sf-subtitle">нет ссылки</span>
+                                }
+                            </td>
+                            <td>
+                                @if (account.ParentAccountId is null && account.ChildAccountsCount > 0)
+                                {
+                                    <span class="sf-badge sf-badge-owned">Главный</span>
+                                }
+                                @if (account.ParentAccountId is not null)
+                                {
+                                    <span class="sf-badge sf-badge-family">Child of @account.ParentLoginName</span>
+                                }
+                                <div class="sf-subtitle mt-1">Семья: @account.FamilyAccountsCount</div>
+                                @if (!string.IsNullOrWhiteSpace(account.ParentLoginName))
+                                {
+                                    <div class="sf-subtitle">Parent: @account.ParentLoginName</div>
+                                }
+                            </td>
+                            <td>
+                                <div>@account.GamesCount</div>
+                                <div class="sf-subtitle">@account.GamesLastSyncAt?.ToString("g")</div>
+                            </td>
+                            <td><span class="sf-badge sf-badge-muted">@account.Status</span></td>
+                            <td>
+                                <div class="sf-subtitle">check: @account.LastCheckAt?.ToString("g")</div>
+                                <div class="sf-subtitle">ok: @account.LastSuccessAt?.ToString("g")</div>
+                            </td>
+                            <td>
+                                <div class="d-flex gap-1 flex-wrap">
+                                    <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Details" asp-route-id="@account.Id">Открыть</a>
+                                    <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Edit" asp-route-id="@account.Id">Редактировать</a>
+                                    <form asp-action="ValidateSession" asp-route-id="@account.Id" method="post">
+                                        <button class="btn sf-btn sf-btn-primary btn-sm" type="submit">Validate</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>

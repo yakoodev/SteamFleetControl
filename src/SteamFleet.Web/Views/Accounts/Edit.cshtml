@@ -1,0 +1,51 @@
+@model AccountUpsertRequest
+@{
+    ViewData["Title"] = "Редактирование";
+    var id = (Guid)ViewData["AccountId"]!;
+}
+
+<section class="sf-card">
+    <div class="sf-card-head">
+        <h1 class="sf-title">Редактирование аккаунта</h1>
+    </div>
+    <div class="sf-card-body">
+        <form asp-action="EditPost" asp-route-id="@id" method="post" class="sf-grid">
+            <div class="sf-col-4">
+                <label asp-for="LoginName" class="form-label">Login</label>
+                <input asp-for="LoginName" class="form-control" readonly />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="DisplayName" class="form-label">Display Name</label>
+                <input asp-for="DisplayName" class="form-control" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="Email" class="form-label">Email</label>
+                <input asp-for="Email" class="form-control" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="FolderName" class="form-label">Папка</label>
+                <input asp-for="FolderName" class="form-control" />
+            </div>
+            <div class="sf-col-4">
+                <label class="form-label">Теги (через запятую)</label>
+                <input name="Tags" class="form-control" value="@string.Join(',', Model.Tags)" />
+            </div>
+            <div class="sf-col-4">
+                <label asp-for="Status" class="form-label">Статус</label>
+                <select asp-for="Status" asp-items="Html.GetEnumSelectList<AccountStatus>()" class="form-select"></select>
+            </div>
+            <div class="sf-col-6">
+                <label asp-for="SessionPayload" class="form-label">Session payload (новое значение)</label>
+                <textarea asp-for="SessionPayload" rows="3" class="form-control"></textarea>
+            </div>
+            <div class="sf-col-6">
+                <label asp-for="Note" class="form-label">Примечание</label>
+                <textarea asp-for="Note" rows="3" class="form-control"></textarea>
+            </div>
+            <div class="sf-col-12 d-flex gap-2">
+                <button class="btn sf-btn sf-btn-primary" type="submit">Сохранить</button>
+                <a class="btn sf-btn sf-btn-secondary" asp-action="Details" asp-route-id="@id">Отмена</a>
+            </div>
+        </form>
+    </div>
+</section>

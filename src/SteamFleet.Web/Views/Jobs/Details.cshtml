@@ -1,0 +1,97 @@
+@model JobDetailsViewModel
+@{
+    ViewData["Title"] = "Детали задачи";
+    var canDownloadSensitiveReport = User.IsInRole("SuperAdmin") || User.IsInRole("Admin");
+}
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+            <h1 class="sf-title">Задача @Model.Job.Id</h1>
+            <div class="sf-subtitle">Тип: @Model.Job.Type | Статус: @Model.Job.Status</div>
+        </div>
+        <div class="d-flex gap-2">
+            @if (Model.Job.Status is not JobStatus.Completed and not JobStatus.Canceled and not JobStatus.Failed)
+            {
+                <form asp-action="Cancel" asp-route-id="@Model.Job.Id" method="post">
+                    <button class="btn sf-btn sf-btn-danger btn-sm" type="submit">Отменить</button>
+                </form>
+            }
+            <a asp-action="Index" class="btn sf-btn sf-btn-secondary btn-sm">Назад</a>
+        </div>
+    </div>
+    <div class="sf-card-body">
+        <div class="sf-grid">
+            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Всего</div><div class="sf-kpi-value">@Model.Job.TotalCount</div></div></div>
+            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Успех</div><div class="sf-kpi-value">@Model.Job.SuccessCount</div></div></div>
+            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Ошибки</div><div class="sf-kpi-value">@Model.Job.FailureCount</div></div></div>
+            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Dry-run</div><div class="sf-kpi-value">@Model.Job.DryRun</div></div></div>
+        </div>
+    </div>
+</section>
+
+@if (Model.Job.HasSensitiveReport)
+{
+    <section class="sf-card mb-3">
+        <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Чувствительный отчёт</h2></div>
+        <div class="sf-card-body">
+            @if (Model.Job.SensitiveReportConsumed)
+            {
+                <div class="sf-subtitle">Отчёт уже был скачан ранее и больше недоступен.</div>
+            }
+            else if (!canDownloadSensitiveReport)
+            {
+                <div class="sf-subtitle">Скачивание доступно только ролям SuperAdmin/Admin.</div>
+            }
+            else
+            {
+                <div class="sf-subtitle mb-2">CSV с plaintext-паролями доступен только один раз.</div>
+                <a class="btn sf-btn sf-btn-primary" asp-action="SensitiveReport" asp-route-id="@Model.Job.Id">Скачать одноразовый CSV</a>
+            }
+        </div>
+    </section>
+}
+
+<section class="sf-card">
+    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Per-account результаты</h2></div>
+    <div class="sf-card-body">
+        @if (Model.Items.Count == 0)
+        {
+            <div class="sf-empty">По этой задаче нет item-результатов.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead>
+                    <tr>
+                        <th>Account</th>
+                        <th>Status</th>
+                        <th>Attempt</th>
+                        <th>Reason</th>
+                        <th>Retryable</th>
+                        <th>Error</th>
+                        <th>Started</th>
+                        <th>Finished</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var item in Model.Items)
+                    {
+                        <tr>
+                            <td>@item.AccountId</td>
+                            <td>@item.Status</td>
+                            <td>@item.Attempt</td>
+                            <td>@item.ReasonCode</td>
+                            <td>@item.Retryable</td>
+                            <td>@item.ErrorText</td>
+                            <td>@item.StartedAt?.ToString("g")</td>
+                            <td>@item.FinishedAt?.ToString("g")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>

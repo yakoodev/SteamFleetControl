@@ -1,0 +1,67 @@
+@model IReadOnlyCollection<JobDto>
+@{
+    ViewData["Title"] = "Задачи";
+}
+
+<section class="sf-card">
+    <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1 class="sf-title">Batch-задачи</h1>
+            <div class="sf-subtitle">Пакетные операции, retry, dry-run, sensitive report для password-change</div>
+        </div>
+        <a class="btn sf-btn sf-btn-primary" asp-action="Create">Создать задачу</a>
+    </div>
+    <div class="sf-card-body">
+        @if (Model.Count == 0)
+        {
+            <div class="sf-empty">Список задач пуст.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Тип</th>
+                        <th>Статус</th>
+                        <th>Создана</th>
+                        <th>Успех</th>
+                        <th>Ошибки</th>
+                        <th>Отчёт</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var job in Model)
+                    {
+                        <tr>
+                            <td>@job.Id</td>
+                            <td>@job.Type</td>
+                            <td>@job.Status</td>
+                            <td>@job.CreatedAt.ToString("g")</td>
+                            <td>@job.SuccessCount</td>
+                            <td>@job.FailureCount</td>
+                            <td>
+                                @if (job.HasSensitiveReport && !job.SensitiveReportConsumed)
+                                {
+                                    <span class="sf-badge sf-badge-family">доступен</span>
+                                }
+                                else if (job.SensitiveReportConsumed)
+                                {
+                                    <span class="sf-badge sf-badge-muted">скачан</span>
+                                }
+                                else
+                                {
+                                    <span class="sf-subtitle">-</span>
+                                }
+                            </td>
+                            <td><a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Details" asp-route-id="@job.Id">Открыть</a></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>

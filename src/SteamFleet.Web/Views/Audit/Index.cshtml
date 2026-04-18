@@ -1,0 +1,30 @@
+@model IReadOnlyCollection<AuditEventDto>
+@{
+    ViewData["Title"] = "Аудит";
+}
+<h1 class="h4">Журнал аудита</h1>
+<table class="table table-sm table-striped">
+    <thead>
+    <tr>
+        <th>Время</th>
+        <th>Тип</th>
+        <th>Entity</th>
+        <th>Actor</th>
+        <th>IP</th>
+        <th>Payload</th>
+    </tr>
+    </thead>
+    <tbody>
+    @foreach (var item in Model)
+    {
+        <tr>
+            <td>@item.CreatedAt.ToString("g")</td>
+            <td>@item.EventType</td>
+            <td>@item.EntityType:@item.EntityId</td>
+            <td>@item.ActorId</td>
+            <td>@item.Ip</td>
+            <td><pre class="mb-0">@System.Text.Json.JsonSerializer.Serialize(item.Payload)</pre></td>
+        </tr>
+    }
+    </tbody>
+</table>
