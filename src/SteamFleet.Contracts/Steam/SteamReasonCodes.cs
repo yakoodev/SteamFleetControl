@@ -8,6 +8,10 @@ public static class SteamReasonCodes
     public const string AntiBotBlocked = "AntiBotBlocked";
     public const string EndpointRejected = "EndpointRejected";
     public const string Timeout = "Timeout";
+    public const string Canceled = "Canceled";
+    public const string Expired = "Expired";
+    public const string AuthFailed = "AuthFailed";
+    public const string DuplicateAccount = "DuplicateAccount";
     public const string InvalidInviteLink = "InvalidInviteLink";
     public const string TargetAccountMissing = "TargetAccountMissing";
     public const string SourceAccountMissing = "SourceAccountMissing";

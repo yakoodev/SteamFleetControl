@@ -83,6 +83,71 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
         CancellationToken cancellationToken)
         => accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
 
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("qr/start")]
+    public async Task<ActionResult<AccountQrOnboardingStartResult>> StartQrOnboarding(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.StartQrOnboardingAsync(ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpGet("qr/{flowId:guid}")]
+    public async Task<ActionResult<AccountQrOnboardingPollResult>> PollQrOnboarding(Guid flowId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.PollQrOnboardingAsync(flowId, ActorId, ClientIp, cancellationToken);
+            if (result.Status == AccountQrOnboardingStatus.Conflict)
+            {
+                return Conflict(result);
+            }
+
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("qr/{flowId:guid}/cancel")]
+    public async Task<IActionResult> CancelQrOnboarding(Guid flowId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await accountService.CancelQrOnboardingAsync(flowId, ActorId, ClientIp, cancellationToken);
+            return NoContent();
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/authenticate/qr/start")]

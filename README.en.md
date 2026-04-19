@@ -18,6 +18,7 @@ SteamFleetControl is a .NET 8 modular monolith for operating Steam accounts at s
 - ASP.NET Identity + RBAC (`SuperAdmin`, `Admin`, `Operator`, `Auditor`).
 - Encrypted secret storage (AES-GCM, master key outside DB).
 - Steam integration for auth/session/profile/privacy/avatar/password/deauthorize/friends/games.
+- QR onboarding on the account creation page: scan in Steam Guard and auto-create account card.
 - Account import/export, tags, folders, and family-group model.
 - Hangfire-powered batch jobs (retry/backoff, dry-run, cancel, reports).
 - Business-level audit events and security observability.
@@ -32,6 +33,12 @@ After startup:
 - Swagger: <http://localhost:8080/swagger>
 - Hangfire: <http://localhost:8080/hangfire>
 - Health: <http://localhost:8080/health>
+
+QR onboarding:
+1. Open `Accounts -> Create`.
+2. Click `Add via QR`.
+3. Scan the QR code in Steam Guard mobile app.
+4. After approval, the service auto-creates the account and redirects to details.
 
 Default local admin:
 - Email: `admin@local`

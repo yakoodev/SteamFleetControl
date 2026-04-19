@@ -19,6 +19,9 @@ Base URL (local): `http://localhost:8080`
 
 Steam/session actions:
 - `POST /api/accounts/{id}/authenticate`
+- `POST /api/accounts/qr/start`
+- `GET /api/accounts/qr/{flowId}`
+- `POST /api/accounts/qr/{flowId}/cancel`
 - `POST /api/accounts/{id}/authenticate/qr/start`
 - `GET /api/accounts/{id}/authenticate/qr/{flowId}`
 - `POST /api/accounts/{id}/authenticate/qr/{flowId}/cancel`
@@ -63,3 +66,7 @@ Security/family/games/friends:
 ## Notes
 - Check Swagger for the latest DTO schema and examples.
 - Sensitive endpoints require proper role and are rate-limited.
+- QR onboarding lifecycle:
+  - `POST /api/accounts/qr/start` returns `{ flowId, challengeUrl, qrImageDataUrl, expiresAt, pollingIntervalSeconds }`.
+  - `GET /api/accounts/qr/{flowId}` returns pending/completed/conflict/failed status.
+  - duplicate account returns `409 Conflict` with `reasonCode=DuplicateAccount` and `existingAccount`.

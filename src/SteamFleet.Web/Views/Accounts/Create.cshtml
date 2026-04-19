@@ -13,6 +13,16 @@
             <strong>Подсказка по добавлению:</strong> сначала сохраните карточку с login + секретами,
             затем откройте карточку аккаунта и нажмите <strong>Авторизовать</strong>, чтобы записать актуальную Steam-session.
         </div>
+        <div class="sf-alert sf-alert-warning mb-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <strong>Быстрое добавление через QR (Steam Guard):</strong> нажмите кнопку, отсканируйте код в мобильном приложении Steam
+                    и сервис автоматически создаст аккаунт с валидной сессией.
+                </div>
+                <button type="button" id="startQrOnboarding" class="btn sf-btn sf-btn-primary">Добавить через QR</button>
+            </div>
+            <div class="sf-subtitle mt-2">После QR-онбординга пароль/секреты можно заполнить позже в карточке аккаунта.</div>
+        </div>
         <form asp-action="CreatePost" method="post" class="sf-grid">
             <div class="sf-col-12"><h2 class="sf-title h6 mb-0">1. Базовые данные</h2></div>
             <div class="sf-col-3">
@@ -81,41 +91,286 @@
     </div>
 </section>
 
-<script>
-    (() => {
-        const fileInput = document.getElementById("maFile");
-        const shared = document.getElementById("SharedSecret");
-        const identity = document.getElementById("IdentitySecret");
-        const login = document.getElementById("LoginName");
+<div class="modal fade" id="qrOnboardingModal" tabindex="-1" aria-labelledby="qrOnboardingModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="qrOnboardingModalLabel">Добавление аккаунта через Steam Guard QR</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 align-items-start">
+                    <div class="col-md-5 text-center">
+                        <img id="qrOnboardingImage" alt="Steam QR" class="img-fluid rounded border border-secondary p-2 bg-white" />
+                        <div class="mt-2">
+                            <a id="qrOnboardingChallengeLink" href="#" target="_blank" rel="noopener" class="small">Открыть challenge-url</a>
+                        </div>
+                    </div>
+                    <div class="col-md-7">
+                        <div id="qrOnboardingStatus" class="alert alert-info mb-2">Подготовка QR...</div>
+                        <div id="qrOnboardingTimer" class="sf-subtitle mb-3"></div>
+                        <div id="qrOnboardingConflict" class="alert alert-warning d-none">
+                            Такой аккаунт уже есть:
+                            <a id="qrOnboardingConflictLink" class="alert-link" href="#">перейти в карточку</a>
+                        </div>
+                        <ol class="mb-0">
+                            <li>Откройте Steam на телефоне.</li>
+                            <li>Перейдите в Steam Guard Scanner и отсканируйте QR.</li>
+                            <li>Подтвердите вход на телефоне.</li>
+                            <li>Подождите автосоздание карточки и редирект.</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn sf-btn sf-btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="button" class="btn sf-btn sf-btn-danger" id="cancelQrOnboarding">Отменить QR-флоу</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-        if (!fileInput) {
-            return;
-        }
+@section Scripts
+{
+    <script>
+        (() => {
+            const fileInput = document.getElementById("maFile");
+            const shared = document.getElementById("SharedSecret");
+            const identity = document.getElementById("IdentitySecret");
+            const login = document.getElementById("LoginName");
 
-        fileInput.addEventListener("change", async () => {
-            const file = fileInput.files && fileInput.files[0];
-            if (!file) {
+            if (!fileInput) {
                 return;
             }
 
-            try {
-                const raw = await file.text();
-                const data = JSON.parse(raw);
-
-                if (shared && !shared.value && typeof data.shared_secret === "string") {
-                    shared.value = data.shared_secret;
+            fileInput.addEventListener("change", async () => {
+                const file = fileInput.files && fileInput.files[0];
+                if (!file) {
+                    return;
                 }
 
-                if (identity && !identity.value && typeof data.identity_secret === "string") {
-                    identity.value = data.identity_secret;
-                }
+                try {
+                    const raw = await file.text();
+                    const data = JSON.parse(raw);
 
-                if (login && !login.value && typeof data.account_name === "string") {
-                    login.value = data.account_name;
+                    if (shared && !shared.value && typeof data.shared_secret === "string") {
+                        shared.value = data.shared_secret;
+                    }
+
+                    if (identity && !identity.value && typeof data.identity_secret === "string") {
+                        identity.value = data.identity_secret;
+                    }
+
+                    if (login && !login.value && typeof data.account_name === "string") {
+                        login.value = data.account_name;
+                    }
+                } catch {
+                    alert("Не удалось распарсить maFile JSON. Проверьте формат файла.");
                 }
-            } catch {
-                alert("Не удалось распарсить maFile JSON. Проверьте формат файла.");
+            });
+        })();
+
+        (() => {
+            const startButton = document.getElementById("startQrOnboarding");
+            const cancelButton = document.getElementById("cancelQrOnboarding");
+            const modalEl = document.getElementById("qrOnboardingModal");
+            const qrImage = document.getElementById("qrOnboardingImage");
+            const challengeLink = document.getElementById("qrOnboardingChallengeLink");
+            const statusEl = document.getElementById("qrOnboardingStatus");
+            const timerEl = document.getElementById("qrOnboardingTimer");
+            const conflictEl = document.getElementById("qrOnboardingConflict");
+            const conflictLink = document.getElementById("qrOnboardingConflictLink");
+
+            if (!startButton || !cancelButton || !modalEl || typeof bootstrap === "undefined" || !bootstrap.Modal) {
+                return;
             }
-        });
-    })();
-</script>
+
+            const modal = new bootstrap.Modal(modalEl);
+            let flowId = null;
+            let pollTimer = null;
+            let ttlTimer = null;
+            let expiresAt = null;
+
+            function clearTimers() {
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+                if (ttlTimer) {
+                    clearInterval(ttlTimer);
+                    ttlTimer = null;
+                }
+            }
+
+            function setStatus(text, level) {
+                if (!statusEl) {
+                    return;
+                }
+
+                statusEl.className = "alert mb-2";
+                switch ((level || "info").toLowerCase()) {
+                    case "success":
+                        statusEl.classList.add("alert-success");
+                        break;
+                    case "warning":
+                        statusEl.classList.add("alert-warning");
+                        break;
+                    case "danger":
+                        statusEl.classList.add("alert-danger");
+                        break;
+                    default:
+                        statusEl.classList.add("alert-info");
+                        break;
+                }
+
+                statusEl.textContent = text;
+            }
+
+            function updateTimerLabel() {
+                if (!timerEl || !expiresAt) {
+                    return;
+                }
+
+                const leftMs = expiresAt.getTime() - Date.now();
+                if (leftMs <= 0) {
+                    timerEl.textContent = "QR истек.";
+                    return;
+                }
+
+                const totalSeconds = Math.floor(leftMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                timerEl.textContent = `QR действителен ещё ${minutes}:${String(seconds).padStart(2, "0")}`;
+            }
+
+            async function cancelFlow() {
+                if (!flowId) {
+                    return;
+                }
+
+                try {
+                    await fetch(`/api/accounts/qr/${flowId}/cancel`, {
+                        method: "POST",
+                        credentials: "include"
+                    });
+                } catch {
+                    // intentionally ignored
+                }
+            }
+
+            async function pollFlow() {
+                if (!flowId) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/accounts/qr/${flowId}`, {
+                        method: "GET",
+                        credentials: "include"
+                    });
+                    const payload = await response.json();
+                    const status = (payload.status || "").toLowerCase();
+
+                    if (status === "pending") {
+                        setStatus("Ожидание подтверждения в приложении Steam...", "info");
+                        return;
+                    }
+
+                    clearTimers();
+
+                    if (status === "completed" && payload.createdAccount?.id) {
+                        setStatus("Аккаунт успешно добавлен. Переход в карточку...", "success");
+                        window.location.href = `/accounts/${payload.createdAccount.id}`;
+                        return;
+                    }
+
+                    if (status === "conflict" || response.status === 409) {
+                        setStatus("Аккаунт уже существует в базе.", "warning");
+                        if (payload.existingAccount?.id && conflictEl && conflictLink) {
+                            conflictLink.href = `/accounts/${payload.existingAccount.id}`;
+                            conflictLink.textContent = `${payload.existingAccount.loginName ?? "Открыть карточку"}`;
+                            conflictEl.classList.remove("d-none");
+                        }
+                        return;
+                    }
+
+                    if (status === "expired") {
+                        setStatus("QR-код истек. Запустите процесс повторно.", "warning");
+                        return;
+                    }
+
+                    if (status === "canceled") {
+                        setStatus("QR-флоу отменен.", "warning");
+                        return;
+                    }
+
+                    setStatus(payload.errorMessage || "QR-авторизация завершилась с ошибкой.", "danger");
+                } catch (error) {
+                    clearTimers();
+                    setStatus("Не удалось опросить статус QR-флоу.", "danger");
+                }
+            }
+
+            startButton.addEventListener("click", async () => {
+                startButton.setAttribute("disabled", "disabled");
+                clearTimers();
+                flowId = null;
+                expiresAt = null;
+                if (conflictEl) {
+                    conflictEl.classList.add("d-none");
+                }
+                setStatus("Запускаем QR-флоу...", "info");
+                modal.show();
+
+                try {
+                    const response = await fetch("/api/accounts/qr/start", {
+                        method: "POST",
+                        credentials: "include"
+                    });
+
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        setStatus(payload.errorMessage || "Не удалось запустить QR-флоу.", "danger");
+                        return;
+                    }
+
+                    flowId = payload.flowId;
+                    expiresAt = payload.expiresAt ? new Date(payload.expiresAt) : null;
+                    if (qrImage) {
+                        qrImage.src = payload.qrImageDataUrl;
+                    }
+                    if (challengeLink) {
+                        challengeLink.href = payload.challengeUrl;
+                        challengeLink.textContent = payload.challengeUrl;
+                    }
+
+                    setStatus("QR готов. Сканируйте код в Steam Guard.", "success");
+                    updateTimerLabel();
+                    ttlTimer = setInterval(updateTimerLabel, 1000);
+
+                    const intervalSeconds = Math.max(1, Number(payload.pollingIntervalSeconds) || 2);
+                    pollTimer = setInterval(pollFlow, intervalSeconds * 1000);
+                    await pollFlow();
+                } catch (error) {
+                    setStatus("Не удалось запустить QR-флоу.", "danger");
+                } finally {
+                    startButton.removeAttribute("disabled");
+                }
+            });
+
+            cancelButton.addEventListener("click", async () => {
+                await cancelFlow();
+                clearTimers();
+                flowId = null;
+                setStatus("QR-флоу отменен.", "warning");
+            });
+
+            modalEl.addEventListener("hidden.bs.modal", async () => {
+                clearTimers();
+                await cancelFlow();
+                flowId = null;
+                expiresAt = null;
+            });
+        })();
+    </script>
+}

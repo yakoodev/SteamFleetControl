@@ -13,6 +13,9 @@ public interface IAccountService
     Task<AccountImportResult> ImportAsync(Stream stream, string fileName, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<byte[]> ExportCsvAsync(AccountFilterRequest filter, CancellationToken cancellationToken = default);
     Task<SteamAuthResult> AuthenticateAsync(Guid id, AccountAuthenticateRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<AccountQrOnboardingStartResult> StartQrOnboardingAsync(string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<AccountQrOnboardingPollResult> PollQrOnboardingAsync(Guid flowId, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task CancelQrOnboardingAsync(Guid flowId, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamQrAuthStartResult> StartQrAuthenticationAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamQrAuthPollResult> PollQrAuthenticationAsync(Guid id, Guid flowId, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task CancelQrAuthenticationAsync(Guid id, Guid flowId, string actorId, string? ip, CancellationToken cancellationToken = default);
