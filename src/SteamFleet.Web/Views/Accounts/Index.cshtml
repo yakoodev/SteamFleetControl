@@ -42,11 +42,11 @@
                 <select class="form-select" name="FamilyGroup">
                     <option value="" selected="@string.IsNullOrWhiteSpace(filter.FamilyGroup)">Все семейные группы</option>
                     <option value="ungrouped" selected="@(string.Equals(filter.FamilyGroup, "ungrouped", StringComparison.OrdinalIgnoreCase))">Без группы</option>
-                    <option value="main" selected="@(string.Equals(filter.FamilyGroup, "main", StringComparison.OrdinalIgnoreCase))">Главные аккаунты</option>
+                    <option value="with" selected="@(string.Equals(filter.FamilyGroup, "with", StringComparison.OrdinalIgnoreCase) || string.Equals(filter.FamilyGroup, "family", StringComparison.OrdinalIgnoreCase))">В семейной группе</option>
                     @foreach (var main in familyMainOptions)
                     {
-                        <option value="@main.Id" selected="@(string.Equals(filter.FamilyGroup, main.Id.ToString(), StringComparison.OrdinalIgnoreCase))">
-                            @main.LoginName (@main.DisplayName)
+                        <option value="@main.SteamFamilyId" selected="@(string.Equals(filter.FamilyGroup, main.SteamFamilyId, StringComparison.OrdinalIgnoreCase))">
+                            @main.LoginName (@main.DisplayName) / @main.SteamFamilyId
                         </option>
                     }
                 </select>
@@ -84,6 +84,7 @@
                         <th>Семья</th>
                         <th>Игры</th>
                         <th>Статус</th>
+                        <th>Риск</th>
                         <th>Синхронизация</th>
                         <th></th>
                     </tr>
@@ -112,25 +113,45 @@
                                 }
                             </td>
                             <td>
-                                @if (account.ParentAccountId is null && account.ChildAccountsCount > 0)
+                                @if (account.IsExternal)
                                 {
-                                    <span class="sf-badge sf-badge-owned">Главный</span>
+                                    <span class="sf-badge sf-badge-muted">External</span>
                                 }
-                                @if (account.ParentAccountId is not null)
+                                @if (!string.IsNullOrWhiteSpace(account.SteamFamilyId) && !account.IsExternal)
                                 {
-                                    <span class="sf-badge sf-badge-family">Child of @account.ParentLoginName</span>
+                                    <span class="sf-badge sf-badge-family">Family</span>
                                 }
+                                @if (account.IsFamilyOrganizer)
+                                {
+                                    <span class="sf-badge sf-badge-owned">Organizer</span>
+                                }
+                                <div class="sf-subtitle mt-1">FamilyId: @(account.SteamFamilyId ?? "—")</div>
                                 <div class="sf-subtitle mt-1">Семья: @account.FamilyAccountsCount</div>
-                                @if (!string.IsNullOrWhiteSpace(account.ParentLoginName))
-                                {
-                                    <div class="sf-subtitle">Parent: @account.ParentLoginName</div>
-                                }
+                                <div class="sf-subtitle">Role: @(account.SteamFamilyRole ?? "—")</div>
                             </td>
                             <td>
                                 <div>@account.GamesCount</div>
                                 <div class="sf-subtitle">@account.GamesLastSyncAt?.ToString("g")</div>
                             </td>
                             <td><span class="sf-badge sf-badge-muted">@account.Status</span></td>
+                            <td>
+                                <span class="sf-badge @(account.RiskLevel switch
+                                                        {
+                                                            AccountRiskLevel.Cooldown => "sf-badge-danger",
+                                                            AccountRiskLevel.Elevated => "sf-badge-family",
+                                                            _ => "sf-badge-owned"
+                                                        })">
+                                    @account.RiskLevel
+                                </span>
+                                @if (!string.IsNullOrWhiteSpace(account.LastRiskReasonCode))
+                                {
+                                    <div class="sf-subtitle mt-1">@account.LastRiskReasonCode</div>
+                                }
+                                @if (account.AutoRetryAfter is not null)
+                                {
+                                    <div class="sf-subtitle">retry: @account.AutoRetryAfter?.ToString("g")</div>
+                                }
+                            </td>
                             <td>
                                 <div class="sf-subtitle">check: @account.LastCheckAt?.ToString("g")</div>
                                 <div class="sf-subtitle">ok: @account.LastSuccessAt?.ToString("g")</div>

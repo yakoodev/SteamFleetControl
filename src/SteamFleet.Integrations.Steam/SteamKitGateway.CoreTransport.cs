@@ -322,6 +322,12 @@ public sealed partial class SteamKitGateway
                 details.AccountID = accountId.Value;
             }
 
+            var stableLogonId = ResolveStableLoginId(bundle);
+            if (stableLogonId.HasValue)
+            {
+                details.LoginID = stableLogonId.Value;
+            }
+
             steamUser.LogOn(details);
             await loggedOnTcs.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
 
@@ -383,6 +389,26 @@ public sealed partial class SteamKitGateway
         {
             manager.RunWaitCallbacks(TimeSpan.FromMilliseconds(200));
             await Task.Yield();
+        }
+    }
+
+    private async Task<T> ExecuteWithAccountFlowLockAsync<T>(
+        SteamSessionBundle bundle,
+        string flowName,
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        var steamId = string.IsNullOrWhiteSpace(bundle.SteamId64) ? "unknown" : bundle.SteamId64.Trim();
+        var key = $"{steamId}:{flowName}";
+        var flowLock = _accountFlowLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await flowLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await action(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            flowLock.Release();
         }
     }
 
@@ -632,19 +658,27 @@ public sealed partial class SteamKitGateway
         switch (effective)
         {
             case EResult.InvalidPassword:
+                retryable = false;
+                return SteamReasonCodes.InvalidCredentials;
             case EResult.Expired:
-            case EResult.AccessDenied:
                 retryable = true;
                 return SteamReasonCodes.AuthSessionMissing;
+            case EResult.AccessDenied:
+                retryable = true;
+                return SteamReasonCodes.AccessDenied;
+            case EResult.LogonSessionReplaced:
+                retryable = true;
+                return SteamReasonCodes.SessionReplaced;
             case EResult.InvalidLoginAuthCode:
             case EResult.TwoFactorCodeMismatch:
             case EResult.AccountLogonDenied:
             case EResult.AccountLoginDeniedNeedTwoFactor:
                 retryable = true;
                 return SteamReasonCodes.GuardPending;
+            case EResult.AccountLoginDeniedThrottle:
             case EResult.RateLimitExceeded:
                 retryable = true;
-                return SteamReasonCodes.AntiBotBlocked;
+                return SteamReasonCodes.AuthThrottled;
             case EResult.Timeout:
             case EResult.ServiceUnavailable:
                 retryable = true;
@@ -699,6 +733,23 @@ public sealed partial class SteamKitGateway
 
         var steamIdFromToken = TryGetSteamIdFromJwt(bundle.RefreshToken) ?? TryGetSteamIdFromJwt(bundle.AccessToken);
         return steamIdFromToken ?? string.Empty;
+    }
+
+    private static uint? ResolveStableLoginId(SteamSessionBundle bundle)
+    {
+        if (ulong.TryParse(bundle.SteamId64, NumberStyles.None, CultureInfo.InvariantCulture, out var steamId))
+        {
+            return (uint)(steamId & uint.MaxValue);
+        }
+
+        var seed = ResolveLogOnUsername(bundle);
+        if (string.IsNullOrWhiteSpace(seed))
+        {
+            return null;
+        }
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(seed.Trim()));
+        return BitConverter.ToUInt32(bytes, 0);
     }
 
     private static bool LooksLikeHelpLoginPage(string html)

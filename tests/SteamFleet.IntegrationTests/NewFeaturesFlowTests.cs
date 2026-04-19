@@ -108,10 +108,13 @@ public sealed class NewFeaturesFlowTests
 
         var parent = CreateAccount("main", crypto);
         var child = CreateAccount("child", crypto);
+        parent.SteamFamilyId = "family-itest";
+        parent.SteamFamilyRole = "Organizer";
+        parent.IsFamilyOrganizer = true;
+        child.SteamFamilyId = "family-itest";
+        child.SteamFamilyRole = "Adult";
         await dbContext.SteamAccounts.AddRangeAsync(parent, child);
         await dbContext.SaveChangesAsync();
-
-        await accountService.AssignParentAsync(child.Id, parent.Id, "itest", "127.0.0.1");
 
         var now = DateTimeOffset.UtcNow;
         parent.ProfileUrl = "https://steamcommunity.com/profiles/76561198000000001";
@@ -212,7 +215,9 @@ public sealed class NewFeaturesFlowTests
         Assert.Equal("qr-onboard-user", poll.CreatedAccount!.LoginName);
         Assert.Null(poll.ExistingAccount);
 
-        var created = await dbContext.SteamAccounts.Include(x => x.Secret).SingleAsync();
+        var created = await dbContext.SteamAccounts
+            .Include(x => x.Secret)
+            .SingleAsync(x => x.LoginName == "qr-onboard-user");
         Assert.Equal("qr-onboard-user", created.LoginName);
         Assert.Equal("76561198012345678", created.SteamId64);
         Assert.NotNull(created.Secret);
@@ -490,6 +495,68 @@ public sealed class NewFeaturesFlowTests
             {
                 SyncedAt = DateTimeOffset.UtcNow,
                 Friends = []
+            });
+
+        public Task<SteamOperationResult> InviteToFamilyGroupAsync(
+            string sessionPayload,
+            string targetSteamId64,
+            bool inviteAsChild = true,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload) && !string.IsNullOrWhiteSpace(targetSteamId64),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-itest",
+                    ["targetSteamId64"] = targetSteamId64,
+                    ["inviteRole"] = inviteAsChild ? "Child" : "Adult"
+                }
+            });
+
+        public Task<SteamOperationResult> AcceptFamilyInviteAsync(
+            string sessionPayload,
+            string? sourceSteamId64 = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-itest",
+                    ["sourceSteamId64"] = sourceSteamId64 ?? string.Empty
+                }
+            });
+
+        public Task<SteamFamilySnapshot> GetFamilySnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamFamilySnapshot
+            {
+                FamilyId = "family-itest",
+                SelfRole = "Organizer",
+                IsOrganizer = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Members =
+                [
+                    new SteamFamilyMember
+                    {
+                        SteamId64 = "76561198000000000",
+                        DisplayName = "Fake Member",
+                        Role = "Organizer",
+                        IsOrganizer = true
+                    }
+                ]
+            });
+
+        public Task<SteamPublicMemberData> GetPublicMemberDataAsync(string steamId64, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamPublicMemberData
+            {
+                SteamId64 = steamId64,
+                DisplayName = "External Fake",
+                ProfileUrl = $"https://steamcommunity.com/profiles/{steamId64}",
+                IsPublic = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Games = []
             });
 
         public Task<string?> ResolveSteamIdAsync(string loginName, CancellationToken cancellationToken = default)

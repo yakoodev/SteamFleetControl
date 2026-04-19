@@ -20,8 +20,12 @@ public sealed partial class AccountService(
     SteamFleetDbContext dbContext,
     ISteamAccountGateway steamGateway,
     ISecretCryptoService cryptoService,
-    IAuditService auditService) : IAccountService
+    IAuditService auditService,
+    IAccountRiskPolicyService? accountRiskPolicyService = null,
+    IAccountOperationLock? accountOperationLock = null) : IAccountService
 {
+    private readonly IAccountRiskPolicyService riskPolicyService = accountRiskPolicyService ?? new AccountRiskPolicyService();
+    private readonly IAccountOperationLock operationLock = accountOperationLock ?? new InMemoryAccountOperationLock();
     private const string PasswordPendingPrefix = "password.change.pending.";
     private const string PasswordPendingRequestIdKey = PasswordPendingPrefix + "requestId";
     private const string PasswordPendingContextKey = PasswordPendingPrefix + "confirmationContext";
@@ -47,80 +51,124 @@ public sealed partial class AccountService(
         string? ip,
         CancellationToken cancellationToken = default)
     {
-        var account = await dbContext.SteamAccounts
-            .Include(x => x.Secret)
-            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
-            ?? throw new InvalidOperationException("Account not found.");
+        SteamAuthResult authResult;
+        var shouldSyncFamily = false;
 
-        account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
-
-        var password = !string.IsNullOrWhiteSpace(request.Password)
-            ? request.Password
-            : await ReadSecretAsync(account, account.Secret.EncryptedPassword, "password", actorId, ip, cancellationToken);
-
-        if (string.IsNullOrWhiteSpace(password))
+        await using (var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken))
         {
-            return new SteamAuthResult
+            var account = await dbContext.SteamAccounts
+                .Include(x => x.Secret)
+                .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+                ?? throw new InvalidOperationException("Account not found.");
+
+            account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
+            await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+
+            var password = !string.IsNullOrWhiteSpace(request.Password)
+                ? request.Password
+                : await ReadSecretAsync(account, account.Secret.EncryptedPassword, "password", actorId, ip, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(password))
             {
-                Success = false,
-                ErrorMessage = "Password is required for authentication."
-            };
-        }
+                return new SteamAuthResult
+                {
+                    Success = false,
+                    ErrorMessage = "Password is required for authentication."
+                };
+            }
 
-        var sharedSecret = !string.IsNullOrWhiteSpace(request.SharedSecret)
-            ? request.SharedSecret
-            : await ReadSecretAsync(account, account.Secret.EncryptedSharedSecret, "shared_secret", actorId, ip, cancellationToken);
+            var sharedSecret = !string.IsNullOrWhiteSpace(request.SharedSecret)
+                ? request.SharedSecret
+                : await ReadSecretAsync(account, account.Secret.EncryptedSharedSecret, "shared_secret", actorId, ip, cancellationToken);
 
-        var identitySecret = !string.IsNullOrWhiteSpace(request.IdentitySecret)
-            ? request.IdentitySecret
-            : await ReadSecretAsync(account, account.Secret.EncryptedIdentitySecret, "identity_secret", actorId, ip, cancellationToken);
+            var identitySecret = !string.IsNullOrWhiteSpace(request.IdentitySecret)
+                ? request.IdentitySecret
+                : await ReadSecretAsync(account, account.Secret.EncryptedIdentitySecret, "identity_secret", actorId, ip, cancellationToken);
 
-        var guardData = await ReadSecretAsync(account, account.Secret.EncryptedRecoveryPayload, "guard_data", actorId, ip, cancellationToken);
+            var guardData = await ReadSecretAsync(account, account.Secret.EncryptedRecoveryPayload, "guard_data", actorId, ip, cancellationToken);
 
-        var authResult = await steamGateway.AuthenticateAsync(new SteamCredentials
-        {
-            LoginName = account.LoginName,
-            Password = password!,
-            SharedSecret = sharedSecret,
-            IdentitySecret = identitySecret,
-            GuardCode = request.GuardCode,
-            GuardData = guardData,
-            AllowDeviceConfirmation = request.AllowDeviceConfirmation
-        }, cancellationToken);
+            authResult = await steamGateway.AuthenticateAsync(new SteamCredentials
+            {
+                LoginName = account.LoginName,
+                Password = password!,
+                SharedSecret = sharedSecret,
+                IdentitySecret = identitySecret,
+                GuardCode = request.GuardCode,
+                GuardData = guardData,
+                AllowDeviceConfirmation = request.AllowDeviceConfirmation
+            }, cancellationToken);
 
-        account.LastCheckAt = DateTimeOffset.UtcNow;
+            account.LastCheckAt = DateTimeOffset.UtcNow;
 
-        if (authResult.Success && !string.IsNullOrWhiteSpace(authResult.Session.CookiePayload))
-        {
-            await ApplyAuthResultAsync(
-                account,
-                authResult,
-                password,
-                sharedSecret,
-                identitySecret,
+            if (authResult.Success && !string.IsNullOrWhiteSpace(authResult.Session.CookiePayload))
+            {
+                await ApplyAuthResultAsync(
+                    account,
+                    authResult,
+                    password,
+                    sharedSecret,
+                    identitySecret,
+                    actorId,
+                    ip,
+                    cancellationToken);
+                await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
+                shouldSyncFamily = true;
+            }
+            else
+            {
+                var transition = riskPolicyService.MarkOperationFailure(
+                    account,
+                    SteamReasonCodes.AuthSessionMissing,
+                    automated: false,
+                    DateTimeOffset.UtcNow);
+                account.Status = AccountStatus.RequiresRelogin;
+                account.LastErrorAt = DateTimeOffset.UtcNow;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    actorId,
+                    ip,
+                    SteamReasonCodes.AuthSessionMissing,
+                    cancellationToken);
+            }
+
+            await auditService.WriteAsync(
+                AuditEventType.AccountUpdated,
+                "steam_account",
+                account.Id.ToString(),
                 actorId,
                 ip,
+                new Dictionary<string, string>
+                {
+                    ["operation"] = "authenticate",
+                    ["success"] = authResult.Success.ToString()
+                },
                 cancellationToken);
         }
-        else
-        {
-            account.Status = AccountStatus.RequiresRelogin;
-            account.LastErrorAt = DateTimeOffset.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
 
-        await auditService.WriteAsync(
-            AuditEventType.AccountUpdated,
-            "steam_account",
-            account.Id.ToString(),
-            actorId,
-            ip,
-            new Dictionary<string, string>
+        if (shouldSyncFamily)
+        {
+            try
             {
-                ["operation"] = "authenticate",
-                ["success"] = authResult.Success.ToString()
-            },
-            cancellationToken);
+                await SyncFamilyFromSteamAsync(id, actorId, ip, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await auditService.WriteAsync(
+                    AuditEventType.SystemError,
+                    "steam_account",
+                    id.ToString(),
+                    actorId,
+                    ip,
+                    new Dictionary<string, string>
+                    {
+                        ["operation"] = "family_auto_sync",
+                        ["error"] = ex.Message
+                    },
+                    cancellationToken);
+            }
+        }
 
         return authResult;
     }
@@ -292,8 +340,6 @@ public sealed partial class AccountService(
         var created = await dbContext.SteamAccounts
             .AsNoTracking()
             .Include(x => x.Folder)
-            .Include(x => x.ParentAccount)
-            .Include(x => x.ChildAccounts)
             .Include(x => x.TagLinks)
             .ThenInclude(x => x.Tag)
             .FirstAsync(x => x.Id == entity.Id, cancellationToken);
@@ -302,6 +348,27 @@ public sealed partial class AccountService(
         result.ReasonCode = SteamReasonCodes.None;
         result.ErrorMessage = null;
         result.CreatedAccount = MapAccountDto(created, familyCount: 1);
+
+        try
+        {
+            await SyncFamilyFromSteamAsync(created.Id, actorId, ip, cancellationToken);
+            result.CreatedAccount = await GetByIdAsync(created.Id, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await auditService.WriteAsync(
+                AuditEventType.SystemError,
+                "steam_account",
+                created.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["operation"] = "family_auto_sync",
+                    ["error"] = ex.Message
+                },
+                cancellationToken);
+        }
 
         await auditService.WriteAsync(
             AuditEventType.AccountCreated,
@@ -346,11 +413,11 @@ public sealed partial class AccountService(
         string? ip,
         CancellationToken cancellationToken = default)
     {
-        var exists = await dbContext.SteamAccounts.AnyAsync(x => x.Id == id, cancellationToken);
-        if (!exists)
-        {
-            throw new InvalidOperationException("Account not found.");
-        }
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
+        var account = await dbContext.SteamAccounts
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         var start = await steamGateway.StartQrAuthenticationAsync(cancellationToken);
 
@@ -377,46 +444,90 @@ public sealed partial class AccountService(
         string? ip,
         CancellationToken cancellationToken = default)
     {
-        var account = await dbContext.SteamAccounts
-            .Include(x => x.Secret)
-            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
-            ?? throw new InvalidOperationException("Account not found.");
+        SteamQrAuthPollResult poll;
+        var shouldSyncFamily = false;
 
-        var poll = await steamGateway.PollQrAuthenticationAsync(flowId, cancellationToken);
-        if (poll.Status == SteamQrAuthStatus.Completed &&
-            poll.AuthResult is { Success: true } authResult &&
-            !string.IsNullOrWhiteSpace(authResult.Session.CookiePayload))
+        await using (var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken))
         {
-            await ApplyAuthResultAsync(
-                account,
-                authResult,
-                plaintextPassword: null,
-                plaintextSharedSecret: null,
-                plaintextIdentitySecret: null,
+            var account = await dbContext.SteamAccounts
+                .Include(x => x.Secret)
+                .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+                ?? throw new InvalidOperationException("Account not found.");
+            await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+
+            poll = await steamGateway.PollQrAuthenticationAsync(flowId, cancellationToken);
+            if (poll.Status == SteamQrAuthStatus.Completed &&
+                poll.AuthResult is { Success: true } authResult &&
+                !string.IsNullOrWhiteSpace(authResult.Session.CookiePayload))
+            {
+                await ApplyAuthResultAsync(
+                    account,
+                    authResult,
+                    plaintextPassword: null,
+                    plaintextSharedSecret: null,
+                    plaintextIdentitySecret: null,
+                    actorId,
+                    ip,
+                    cancellationToken);
+                await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
+                shouldSyncFamily = true;
+            }
+            else if (poll.Status is SteamQrAuthStatus.Failed or SteamQrAuthStatus.Expired)
+            {
+                var transition = riskPolicyService.MarkOperationFailure(
+                    account,
+                    SteamReasonCodes.AuthSessionMissing,
+                    automated: false,
+                    DateTimeOffset.UtcNow);
+                account.LastErrorAt = DateTimeOffset.UtcNow;
+                account.Status = AccountStatus.RequiresRelogin;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    actorId,
+                    ip,
+                    SteamReasonCodes.AuthSessionMissing,
+                    cancellationToken);
+            }
+
+            await auditService.WriteAsync(
+                AuditEventType.AccountUpdated,
+                "steam_account",
+                id.ToString(),
                 actorId,
                 ip,
+                new Dictionary<string, string>
+                {
+                    ["operation"] = "qr_auth_poll",
+                    ["flowId"] = flowId.ToString(),
+                    ["status"] = poll.Status.ToString()
+                },
                 cancellationToken);
         }
-        else if (poll.Status is SteamQrAuthStatus.Failed or SteamQrAuthStatus.Expired)
-        {
-            account.LastErrorAt = DateTimeOffset.UtcNow;
-            account.Status = AccountStatus.RequiresRelogin;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
 
-        await auditService.WriteAsync(
-            AuditEventType.AccountUpdated,
-            "steam_account",
-            id.ToString(),
-            actorId,
-            ip,
-            new Dictionary<string, string>
+        if (shouldSyncFamily)
+        {
+            try
             {
-                ["operation"] = "qr_auth_poll",
-                ["flowId"] = flowId.ToString(),
-                ["status"] = poll.Status.ToString()
-            },
-            cancellationToken);
+                await SyncFamilyFromSteamAsync(id, actorId, ip, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await auditService.WriteAsync(
+                    AuditEventType.SystemError,
+                    "steam_account",
+                    id.ToString(),
+                    actorId,
+                    ip,
+                    new Dictionary<string, string>
+                    {
+                        ["operation"] = "family_auto_sync",
+                        ["error"] = ex.Message
+                    },
+                    cancellationToken);
+            }
+        }
 
         return poll;
     }
@@ -428,11 +539,11 @@ public sealed partial class AccountService(
         string? ip,
         CancellationToken cancellationToken = default)
     {
-        var exists = await dbContext.SteamAccounts.AnyAsync(x => x.Id == id, cancellationToken);
-        if (!exists)
-        {
-            throw new InvalidOperationException("Account not found.");
-        }
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
+        var account = await dbContext.SteamAccounts
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         await steamGateway.CancelQrAuthenticationAsync(flowId, cancellationToken);
 
@@ -452,14 +563,31 @@ public sealed partial class AccountService(
 
     public async Task<SteamSessionValidationResult> ValidateSessionAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         var sessionPayload = await GetSessionPayloadAsync(account, actorId, ip, cancellationToken);
         if (string.IsNullOrWhiteSpace(sessionPayload))
         {
+            var missingTransition = riskPolicyService.MarkOperationFailure(
+                account,
+                SteamReasonCodes.AuthSessionMissing,
+                automated: false,
+                DateTimeOffset.UtcNow);
+            account.LastErrorAt = DateTimeOffset.UtcNow;
+            account.Status = AccountStatus.RequiresRelogin;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                missingTransition,
+                actorId,
+                ip,
+                SteamReasonCodes.AuthSessionMissing,
+                cancellationToken);
             return new SteamSessionValidationResult { IsValid = false, Reason = "No session payload configured" };
         }
 
@@ -472,11 +600,25 @@ public sealed partial class AccountService(
             {
                 account.Status = AccountStatus.Active;
             }
+
+            await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
         }
         else
         {
+            var transition = riskPolicyService.MarkOperationFailure(
+                account,
+                SteamReasonCodes.AuthSessionMissing,
+                automated: false,
+                DateTimeOffset.UtcNow);
             account.LastErrorAt = DateTimeOffset.UtcNow;
             account.Status = AccountStatus.RequiresRelogin;
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                SteamReasonCodes.AuthSessionMissing,
+                cancellationToken);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -486,10 +628,12 @@ public sealed partial class AccountService(
 
     public async Task<SteamSessionInfo> RefreshSessionAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         var sessionPayload = await GetSessionPayloadAsync(account, actorId, ip, cancellationToken)
                              ?? throw new InvalidOperationException("No session payload configured for refresh.");
@@ -535,6 +679,7 @@ public sealed partial class AccountService(
         account.LastCheckAt = DateTimeOffset.UtcNow;
         account.LastSuccessAt = DateTimeOffset.UtcNow;
         account.Status = AccountStatus.Active;
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 

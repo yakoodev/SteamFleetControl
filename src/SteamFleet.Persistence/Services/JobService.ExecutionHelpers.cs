@@ -301,8 +301,12 @@ public sealed partial class JobService
 
         if (string.Equals(result.ReasonCode, SteamReasonCodes.Timeout, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(result.ReasonCode, SteamReasonCodes.AuthSessionMissing, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(result.ReasonCode, SteamReasonCodes.AccessDenied, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(result.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(result.ReasonCode, SteamReasonCodes.AntiBotBlocked, StringComparison.OrdinalIgnoreCase))
+            string.Equals(result.ReasonCode, SteamReasonCodes.AntiBotBlocked, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(result.ReasonCode, SteamReasonCodes.CooldownActive, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(result.ReasonCode, SteamReasonCodes.AuthThrottled, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(result.ReasonCode, SteamReasonCodes.SessionReplaced, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -381,6 +385,74 @@ public sealed partial class JobService
 
     private sealed record FriendPair(Guid SourceAccountId, Guid TargetAccountId);
     private sealed record PasswordReportRow(Guid AccountId, string LoginName, string NewPassword, bool Deauthorized);
+
+    private async Task WriteRiskAuditAsync(
+        SteamAccount account,
+        AccountRiskTransition transition,
+        string actorId,
+        string? reasonCode,
+        CancellationToken cancellationToken)
+    {
+        var normalizedReason = string.IsNullOrWhiteSpace(reasonCode) ? SteamReasonCodes.Unknown : reasonCode;
+        if (transition.CooldownScheduled)
+        {
+            await auditService.WriteAsync(
+                AuditEventType.RiskCooldownScheduled,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                null,
+                new Dictionary<string, string>
+                {
+                    ["riskLevel"] = account.RiskLevel.ToString(),
+                    ["reasonCode"] = normalizedReason,
+                    ["autoRetryAfter"] = account.AutoRetryAfter?.ToString("O") ?? string.Empty
+                },
+                cancellationToken);
+        }
+
+        if (transition.CurrentLevel != AccountRiskLevel.Normal)
+        {
+            await auditService.WriteAsync(
+                AuditEventType.RiskSignalDetected,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                null,
+                new Dictionary<string, string>
+                {
+                    ["riskLevel"] = account.RiskLevel.ToString(),
+                    ["reasonCode"] = normalizedReason,
+                    ["authFailStreak"] = account.AuthFailStreak.ToString(),
+                    ["riskSignalStreak"] = account.RiskSignalStreak.ToString()
+                },
+                cancellationToken);
+        }
+    }
+
+    private async Task MarkRiskRecoveredAsync(
+        SteamAccount account,
+        string actorId,
+        CancellationToken cancellationToken)
+    {
+        var transition = riskPolicyService.MarkOperationSuccess(account, DateTimeOffset.UtcNow);
+        if (!transition.Recovered)
+        {
+            return;
+        }
+
+        await auditService.WriteAsync(
+            AuditEventType.RiskRecovered,
+            "steam_account",
+            account.Id.ToString(),
+            actorId,
+            null,
+            new Dictionary<string, string>
+            {
+                ["previousLevel"] = transition.PreviousLevel.ToString()
+            },
+            cancellationToken);
+    }
 
     private static JobDto MapJob(FleetJob job)
     {

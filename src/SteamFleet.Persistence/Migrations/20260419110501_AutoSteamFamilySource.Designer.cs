@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SteamFleet.Persistence;
@@ -11,9 +12,11 @@ using SteamFleet.Persistence;
 namespace SteamFleet.Persistence.Migrations
 {
     [DbContext(typeof(SteamFleetDbContext))]
-    partial class SteamFleetDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260419110501_AutoSteamFamilySource")]
+    partial class AutoSteamFamilySource
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -372,12 +375,6 @@ namespace SteamFleet.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<int>("AuthFailStreak")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset?>("AutoRetryAfter")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -421,16 +418,6 @@ namespace SteamFleet.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastErrorAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("LastRiskAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastRiskReasonCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTimeOffset?>("LastSensitiveOpAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<DateTimeOffset?>("LastSuccessAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -461,14 +448,6 @@ namespace SteamFleet.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
-                    b.Property<string>("RiskLevel")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<int>("RiskSignalStreak")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -495,8 +474,6 @@ namespace SteamFleet.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AutoRetryAfter");
-
                     b.HasIndex("FolderId");
 
                     b.HasIndex("IsExternal");
@@ -505,8 +482,6 @@ namespace SteamFleet.Persistence.Migrations
 
                     b.HasIndex("LoginName")
                         .IsUnique();
-
-                    b.HasIndex("RiskLevel");
 
                     b.HasIndex("Status");
 

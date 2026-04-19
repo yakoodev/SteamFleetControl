@@ -12,9 +12,19 @@ public sealed class SteamAccount : EntityBase
     public string? PhoneMasked { get; set; }
     public Guid? FolderId { get; set; }
     public Folder? Folder { get; set; }
-    public Guid? ParentAccountId { get; set; }
-    public SteamAccount? ParentAccount { get; set; }
-    public List<SteamAccount> ChildAccounts { get; set; } = [];
+    public bool IsExternal { get; set; }
+    public string? ExternalSource { get; set; }
+    public string? SteamFamilyId { get; set; }
+    public string? SteamFamilyRole { get; set; }
+    public bool IsFamilyOrganizer { get; set; }
+    public DateTimeOffset? FamilySyncedAt { get; set; }
+    public int AuthFailStreak { get; set; }
+    public int RiskSignalStreak { get; set; }
+    public string? LastRiskReasonCode { get; set; }
+    public DateTimeOffset? LastRiskAt { get; set; }
+    public DateTimeOffset? AutoRetryAfter { get; set; }
+    public AccountRiskLevel RiskLevel { get; set; } = AccountRiskLevel.Normal;
+    public DateTimeOffset? LastSensitiveOpAt { get; set; }
     public AccountStatus Status { get; set; } = AccountStatus.Active;
     public DateTimeOffset? GamesLastSyncAt { get; set; }
     public int GamesCount { get; set; }

@@ -17,11 +17,18 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .Include(x => x.Games)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+
+        if (account.IsExternal)
+        {
+            throw new InvalidOperationException("External family member cannot refresh owned games by session.");
+        }
 
         SteamOwnedGamesSnapshot snapshot;
         try
@@ -44,8 +51,15 @@ public sealed partial class AccountService
         }
         catch (SteamGatewayOperationException ex)
         {
-            ApplyGatewayFailureState(account, ex.ReasonCode, actorId);
+            var transition = ApplyGatewayFailureState(account, ex.ReasonCode, actorId);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                ex.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
             throw;
         }
 
@@ -95,6 +109,8 @@ public sealed partial class AccountService
                 ["games"] = snapshot.Games.Count.ToString(CultureInfo.InvariantCulture)
             },
             cancellationToken);
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         return await GetGamesAsync(account.Id, AccountGamesScope.Owned, null, 1, Math.Max(snapshot.Games.Count, 1), cancellationToken);
     }
@@ -171,23 +187,19 @@ public sealed partial class AccountService
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
 
-        var rootId = account.ParentAccountId ?? account.Id;
-        var familyAccounts = await dbContext.SteamAccounts
-            .AsNoTracking()
-            .Where(x => x.Id == rootId || x.ParentAccountId == rootId)
-            .Select(x => new { x.Id, x.LoginName })
-            .ToListAsync(cancellationToken);
-
-        if (familyAccounts.Count == 0)
-        {
-            familyAccounts.Add(new { account.Id, account.LoginName });
-        }
+        var familyAccounts = string.IsNullOrWhiteSpace(account.SteamFamilyId)
+            ? [new { account.Id, account.LoginName }]
+            : await dbContext.SteamAccounts
+                .AsNoTracking()
+                .Where(x => x.SteamFamilyId == account.SteamFamilyId)
+                .Select(x => new { x.Id, x.LoginName })
+                .ToListAsync(cancellationToken);
 
         var sourceAccountIds = scope switch
         {
-            AccountGamesScope.Owned => new[] { account.Id },
-            AccountGamesScope.Family => familyAccounts.Where(x => x.Id != account.Id).Select(x => x.Id).ToArray(),
-            _ => familyAccounts.Select(x => x.Id).ToArray()
+            AccountGamesScope.Owned => [account.Id],
+            AccountGamesScope.Family => familyAccounts.Where(x => x.Id != account.Id).Select(x => x.Id).Distinct().ToArray(),
+            _ => familyAccounts.Select(x => x.Id).Distinct().ToArray()
         };
 
         if (sourceAccountIds.Length == 0)
@@ -256,6 +268,610 @@ public sealed partial class AccountService
         };
     }
 
+    public async Task<AccountFamilySnapshotDto> SyncFamilyFromSteamAsync(
+        Guid id,
+        string actorId,
+        string? ip,
+        CancellationToken cancellationToken = default)
+    {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
+        var account = await dbContext.SteamAccounts
+            .Include(x => x.Secret)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+
+        if (account.IsExternal)
+        {
+            throw new InvalidOperationException("External family member cannot be used as a sync source.");
+        }
+
+        var previousFamilyId = account.SteamFamilyId;
+        var sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+            account,
+            actorId,
+            ip,
+            currentPassword: null,
+            forceReauthenticate: false,
+            cancellationToken);
+
+        SteamFamilySnapshot familySnapshot;
+        try
+        {
+            try
+            {
+                familySnapshot = await steamGateway.GetFamilySnapshotAsync(sessionPayload, cancellationToken);
+            }
+            catch (SteamGatewayOperationException ex) when (ShouldForceReauthRetry(ex.ReasonCode, ex.Retryable))
+            {
+                sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+                    account,
+                    actorId,
+                    ip,
+                    currentPassword: null,
+                    forceReauthenticate: true,
+                    cancellationToken);
+                familySnapshot = await steamGateway.GetFamilySnapshotAsync(sessionPayload, cancellationToken);
+            }
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            var transition = ApplyGatewayFailureState(account, ex.ReasonCode, actorId);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                ex.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
+            throw;
+        }
+
+        var familyId = familySnapshot.FamilyId?.Trim();
+        if (string.IsNullOrWhiteSpace(familyId))
+        {
+            account.SteamFamilyId = null;
+            account.SteamFamilyRole = null;
+            account.IsFamilyOrganizer = false;
+            account.FamilySyncedAt = familySnapshot.SyncedAt;
+            account.UpdatedBy = actorId;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await auditService.WriteAsync(
+                AuditEventType.FamilySynced,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["familyId"] = "none",
+                    ["members"] = "0"
+                },
+                cancellationToken);
+
+            return await GetFamilySnapshotAsync(id, cancellationToken);
+        }
+
+        var members = familySnapshot.Members
+            .Where(x => !string.IsNullOrWhiteSpace(x.SteamId64))
+            .GroupBy(x => x.SteamId64.Trim(), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(account.SteamId64) &&
+            members.All(x => !string.Equals(x.SteamId64, account.SteamId64, StringComparison.Ordinal)))
+        {
+            members.Add(new SteamFamilyMember
+            {
+                SteamId64 = account.SteamId64,
+                DisplayName = account.DisplayName,
+                Role = familySnapshot.SelfRole,
+                IsOrganizer = familySnapshot.IsOrganizer
+            });
+        }
+
+        var memberSteamIds = members
+            .Select(x => x.SteamId64.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var knownAccounts = await dbContext.SteamAccounts
+            .Where(x => x.SteamId64 != null && memberSteamIds.Contains(x.SteamId64))
+            .ToDictionaryAsync(x => x.SteamId64!, x => x, StringComparer.Ordinal, cancellationToken);
+
+        foreach (var member in members)
+        {
+            var steamId64 = member.SteamId64.Trim();
+            if (!knownAccounts.TryGetValue(steamId64, out var memberAccount))
+            {
+                var loginName = await GenerateUniqueExternalLoginNameAsync(steamId64, cancellationToken);
+                memberAccount = new SteamAccount
+                {
+                    LoginName = loginName,
+                    SteamId64 = steamId64,
+                    DisplayName = member.DisplayName ?? $"Steam {steamId64}",
+                    IsExternal = true,
+                    ExternalSource = "SteamFamily",
+                    Status = AccountStatus.Active,
+                    CreatedBy = actorId,
+                    UpdatedBy = actorId
+                };
+                await dbContext.SteamAccounts.AddAsync(memberAccount, cancellationToken);
+                knownAccounts[steamId64] = memberAccount;
+
+                await auditService.WriteAsync(
+                    AuditEventType.ExternalFamilyMemberUpserted,
+                    "steam_account",
+                    memberAccount.Id.ToString(),
+                    actorId,
+                    ip,
+                    new Dictionary<string, string>
+                    {
+                        ["steamId64"] = steamId64,
+                        ["familyId"] = familyId
+                    },
+                    cancellationToken);
+            }
+
+            memberAccount.SteamFamilyId = familyId;
+            memberAccount.SteamFamilyRole = member.Role;
+            memberAccount.IsFamilyOrganizer = member.IsOrganizer;
+            memberAccount.FamilySyncedAt = familySnapshot.SyncedAt;
+            memberAccount.UpdatedBy = actorId;
+            if (!string.IsNullOrWhiteSpace(member.DisplayName))
+            {
+                memberAccount.DisplayName = member.DisplayName;
+            }
+
+            if (memberAccount.IsExternal)
+            {
+                memberAccount.ExternalSource = "SteamFamily";
+                try
+                {
+                    var publicData = await steamGateway.GetPublicMemberDataAsync(steamId64, cancellationToken);
+                    memberAccount.ProfileUrl = publicData.ProfileUrl ?? memberAccount.ProfileUrl;
+                    if (!string.IsNullOrWhiteSpace(publicData.DisplayName))
+                    {
+                        memberAccount.DisplayName = publicData.DisplayName;
+                    }
+
+                    await UpsertGamesForAccountAsync(memberAccount, publicData.Games, publicData.SyncedAt, cancellationToken);
+                }
+                catch (SteamGatewayOperationException ex) when (
+                    string.Equals(ex.ReasonCode, SteamReasonCodes.ExternalDataUnavailable, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(ex.ReasonCode, SteamReasonCodes.EndpointRejected, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(ex.ReasonCode, SteamReasonCodes.Unknown, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Best-effort open-data enrichment must not fail the full family sync.
+                    memberAccount.LastErrorAt = DateTimeOffset.UtcNow;
+                }
+            }
+        }
+
+        var cleanupFamilyIds = new List<string> { familyId };
+        if (!string.IsNullOrWhiteSpace(previousFamilyId) &&
+            !string.Equals(previousFamilyId, familyId, StringComparison.Ordinal))
+        {
+            cleanupFamilyIds.Add(previousFamilyId);
+        }
+
+        var staleAccounts = await dbContext.SteamAccounts
+            .Where(x => x.SteamFamilyId != null && cleanupFamilyIds.Contains(x.SteamFamilyId))
+            .ToListAsync(cancellationToken);
+        foreach (var stale in staleAccounts)
+        {
+            if (string.IsNullOrWhiteSpace(stale.SteamId64) || memberSteamIds.Contains(stale.SteamId64))
+            {
+                continue;
+            }
+
+            stale.SteamFamilyId = null;
+            stale.SteamFamilyRole = null;
+            stale.IsFamilyOrganizer = false;
+            stale.FamilySyncedAt = familySnapshot.SyncedAt;
+            stale.UpdatedBy = actorId;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditService.WriteAsync(
+            AuditEventType.FamilySynced,
+            "steam_account",
+            account.Id.ToString(),
+            actorId,
+            ip,
+            new Dictionary<string, string>
+            {
+                ["familyId"] = familyId,
+                ["members"] = memberSteamIds.Length.ToString(CultureInfo.InvariantCulture),
+                ["externalMembers"] = members.Count(x => knownAccounts.TryGetValue(x.SteamId64.Trim(), out var row) && row.IsExternal)
+                    .ToString(CultureInfo.InvariantCulture)
+            },
+            cancellationToken);
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return await GetFamilySnapshotAsync(id, cancellationToken);
+    }
+
+    public async Task<AccountFamilySnapshotDto> GetFamilySnapshotAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var account = await dbContext.SteamAccounts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Account not found.");
+
+        if (string.IsNullOrWhiteSpace(account.SteamFamilyId))
+        {
+            return new AccountFamilySnapshotDto
+            {
+                AccountId = account.Id,
+                SteamFamilyId = null,
+                LastSyncedAt = account.FamilySyncedAt,
+                IsOrganizer = account.IsFamilyOrganizer,
+                SelfRole = account.SteamFamilyRole,
+                Members =
+                [
+                    new AccountFamilyMemberDto
+                    {
+                        AccountId = account.Id,
+                        SteamId64 = account.SteamId64 ?? string.Empty,
+                        LoginName = account.LoginName,
+                        DisplayName = account.DisplayName,
+                        IsExternal = account.IsExternal,
+                        ExternalSource = account.ExternalSource,
+                        ProfileUrl = account.ProfileUrl,
+                        FamilyRole = account.SteamFamilyRole,
+                        IsOrganizer = account.IsFamilyOrganizer,
+                        GamesCount = account.GamesCount,
+                        GamesLastSyncAt = account.GamesLastSyncAt
+                    }
+                ]
+            };
+        }
+
+        var members = await dbContext.SteamAccounts
+            .AsNoTracking()
+            .Where(x => x.SteamFamilyId == account.SteamFamilyId)
+            .OrderBy(x => x.IsExternal)
+            .ThenBy(x => x.LoginName)
+            .Select(x => new AccountFamilyMemberDto
+            {
+                AccountId = x.Id,
+                SteamId64 = x.SteamId64 ?? string.Empty,
+                LoginName = x.LoginName,
+                DisplayName = x.DisplayName,
+                IsExternal = x.IsExternal,
+                ExternalSource = x.ExternalSource,
+                ProfileUrl = x.ProfileUrl,
+                FamilyRole = x.SteamFamilyRole,
+                IsOrganizer = x.IsFamilyOrganizer,
+                GamesCount = x.GamesCount,
+                GamesLastSyncAt = x.GamesLastSyncAt
+            })
+            .ToArrayAsync(cancellationToken);
+
+        return new AccountFamilySnapshotDto
+        {
+            AccountId = account.Id,
+            SteamFamilyId = account.SteamFamilyId,
+            LastSyncedAt = account.FamilySyncedAt,
+            IsOrganizer = account.IsFamilyOrganizer,
+            SelfRole = account.SteamFamilyRole,
+            Members = members
+        };
+    }
+
+    public async Task<SteamOperationResult> InviteToFamilyAsync(
+        Guid id,
+        FamilyInviteRequest request,
+        string actorId,
+        string? ip,
+        CancellationToken cancellationToken = default)
+    {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
+        if (request.TargetAccountId == Guid.Empty)
+        {
+            return new SteamOperationResult
+            {
+                Success = false,
+                ErrorMessage = "Target account id is required.",
+                ReasonCode = SteamReasonCodes.TargetAccountMissing
+            };
+        }
+
+        if (request.TargetAccountId == id)
+        {
+            return new SteamOperationResult
+            {
+                Success = false,
+                ErrorMessage = "Source and target accounts must differ.",
+                ReasonCode = SteamReasonCodes.EndpointRejected
+            };
+        }
+
+        var organizer = await dbContext.SteamAccounts
+            .Include(x => x.Secret)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(organizer, automated: false, cancellationToken);
+
+        if (organizer.IsExternal)
+        {
+            throw new InvalidOperationException("External account cannot invite members to Steam Family.");
+        }
+
+        var target = await dbContext.SteamAccounts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == request.TargetAccountId, cancellationToken)
+            ?? throw new InvalidOperationException("Target account not found.");
+
+        if (target.IsExternal)
+        {
+            throw new InvalidOperationException("External account cannot be used as an invite target.");
+        }
+
+        if (string.IsNullOrWhiteSpace(target.SteamId64))
+        {
+            return new SteamOperationResult
+            {
+                Success = false,
+                ErrorMessage = "Target account does not have SteamId64.",
+                ReasonCode = SteamReasonCodes.TargetAccountMissing
+            };
+        }
+
+        var sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+            organizer,
+            actorId,
+            ip,
+            currentPassword: null,
+            forceReauthenticate: false,
+            cancellationToken);
+
+        var result = await steamGateway.InviteToFamilyGroupAsync(
+            sessionPayload,
+            target.SteamId64,
+            request.InviteAsChild,
+            cancellationToken);
+
+        if (!result.Success && ShouldForceReauthRetry(result.ReasonCode, result.Retryable))
+        {
+            sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+                organizer,
+                actorId,
+                ip,
+                currentPassword: null,
+                forceReauthenticate: true,
+                cancellationToken);
+            result = await steamGateway.InviteToFamilyGroupAsync(
+                sessionPayload,
+                target.SteamId64,
+                request.InviteAsChild,
+                cancellationToken);
+        }
+
+        if (!result.Success)
+        {
+            var transition = ApplyGatewayFailureState(organizer, result.ReasonCode, actorId);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                organizer,
+                transition,
+                actorId,
+                ip,
+                result.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
+
+            await auditService.WriteAsync(
+                AuditEventType.FamilyInviteFailed,
+                "steam_account",
+                organizer.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["targetAccountId"] = target.Id.ToString(),
+                    ["targetSteamId64"] = target.SteamId64,
+                    ["reasonCode"] = result.ReasonCode ?? SteamReasonCodes.Unknown,
+                    ["retryable"] = result.Retryable.ToString()
+                },
+                cancellationToken);
+
+            return result;
+        }
+
+        organizer.LastSuccessAt = DateTimeOffset.UtcNow;
+        organizer.LastErrorAt = null;
+        if (organizer.Status is AccountStatus.Error or AccountStatus.RequiresRelogin)
+        {
+            organizer.Status = AccountStatus.Active;
+        }
+
+        organizer.UpdatedBy = actorId;
+        await MarkRiskRecoveredAsync(organizer, actorId, ip, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditService.WriteAsync(
+            AuditEventType.FamilyInviteSent,
+            "steam_account",
+            organizer.Id.ToString(),
+            actorId,
+            ip,
+            new Dictionary<string, string>
+            {
+                ["targetAccountId"] = target.Id.ToString(),
+                ["targetSteamId64"] = target.SteamId64,
+                ["inviteRole"] = request.InviteAsChild ? "Child" : "Adult"
+            },
+            cancellationToken);
+
+        return result;
+    }
+
+    public async Task<SteamOperationResult> AcceptFamilyInviteAsync(
+        Guid id,
+        FamilyAcceptInviteRequest request,
+        string actorId,
+        string? ip,
+        CancellationToken cancellationToken = default)
+    {
+        SteamOperationResult result;
+        string? sourceSteamId64 = null;
+
+        await using (var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken))
+        {
+            var account = await dbContext.SteamAccounts
+                .Include(x => x.Secret)
+                .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+                ?? throw new InvalidOperationException("Account not found.");
+            await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+
+            if (account.IsExternal)
+            {
+                throw new InvalidOperationException("External account cannot accept Steam Family invites.");
+            }
+
+            if (request.SourceAccountId.HasValue)
+            {
+                if (request.SourceAccountId.Value == id)
+                {
+                    return new SteamOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Source and target accounts must differ.",
+                        ReasonCode = SteamReasonCodes.EndpointRejected
+                    };
+                }
+
+                var source = await dbContext.SteamAccounts
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == request.SourceAccountId.Value, cancellationToken)
+                    ?? throw new InvalidOperationException("Source account not found.");
+
+                if (string.IsNullOrWhiteSpace(source.SteamId64))
+                {
+                    return new SteamOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Source account does not have SteamId64.",
+                        ReasonCode = SteamReasonCodes.SourceAccountMissing
+                    };
+                }
+
+                sourceSteamId64 = source.SteamId64;
+            }
+
+            var sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+                account,
+                actorId,
+                ip,
+                currentPassword: null,
+                forceReauthenticate: false,
+                cancellationToken);
+
+            result = await steamGateway.AcceptFamilyInviteAsync(
+                sessionPayload,
+                sourceSteamId64,
+                cancellationToken);
+
+            if (!result.Success && ShouldForceReauthRetry(result.ReasonCode, result.Retryable))
+            {
+                sessionPayload = await EnsureSessionPayloadForGatewayAsync(
+                    account,
+                    actorId,
+                    ip,
+                    currentPassword: null,
+                    forceReauthenticate: true,
+                    cancellationToken);
+                result = await steamGateway.AcceptFamilyInviteAsync(
+                    sessionPayload,
+                    sourceSteamId64,
+                    cancellationToken);
+            }
+
+            if (!result.Success)
+            {
+                var transition = ApplyGatewayFailureState(account, result.ReasonCode, actorId);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    actorId,
+                    ip,
+                    result.ReasonCode ?? SteamReasonCodes.Unknown,
+                    cancellationToken);
+
+                await auditService.WriteAsync(
+                    AuditEventType.FamilyInviteFailed,
+                    "steam_account",
+                    account.Id.ToString(),
+                    actorId,
+                    ip,
+                    new Dictionary<string, string>
+                    {
+                        ["sourceAccountId"] = request.SourceAccountId?.ToString() ?? string.Empty,
+                        ["sourceSteamId64"] = sourceSteamId64 ?? string.Empty,
+                        ["reasonCode"] = result.ReasonCode ?? SteamReasonCodes.Unknown,
+                        ["retryable"] = result.Retryable.ToString()
+                    },
+                    cancellationToken);
+
+                return result;
+            }
+
+            account.LastSuccessAt = DateTimeOffset.UtcNow;
+            account.LastErrorAt = null;
+            if (account.Status is AccountStatus.Error or AccountStatus.RequiresRelogin)
+            {
+                account.Status = AccountStatus.Active;
+            }
+
+            account.UpdatedBy = actorId;
+            await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await auditService.WriteAsync(
+                AuditEventType.FamilyInviteAccepted,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["sourceAccountId"] = request.SourceAccountId?.ToString() ?? string.Empty,
+                    ["sourceSteamId64"] = sourceSteamId64 ?? string.Empty
+                },
+                cancellationToken);
+        }
+
+        try
+        {
+            await SyncFamilyFromSteamAsync(id, actorId, ip, cancellationToken);
+        }
+        catch
+        {
+            // Accept operation stays successful even if immediate family-sync failed.
+        }
+
+        if (request.SourceAccountId.HasValue)
+        {
+            try
+            {
+                await SyncFamilyFromSteamAsync(request.SourceAccountId.Value, actorId, ip, cancellationToken);
+            }
+            catch
+            {
+                // Best-effort sync for source account.
+            }
+        }
+
+        return result;
+    }
+
     public async Task<FriendInviteLinkDto?> GetFriendInviteLinkAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var account = await dbContext.SteamAccounts
@@ -277,10 +893,12 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         SteamFriendInviteLink invite;
         try
@@ -311,8 +929,15 @@ public sealed partial class AccountService
         }
         catch (SteamGatewayOperationException ex)
         {
-            ApplyGatewayFailureState(account, ex.ReasonCode, actorId);
+            var transition = ApplyGatewayFailureState(account, ex.ReasonCode, actorId);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                ex.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
             throw;
         }
 
@@ -327,6 +952,7 @@ public sealed partial class AccountService
         account.LastErrorAt = null;
         account.Status = AccountStatus.Active;
         account.UpdatedBy = actorId;
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await auditService.WriteAsync(
@@ -351,10 +977,12 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(inviteUrl))
         {
@@ -388,8 +1016,15 @@ public sealed partial class AccountService
 
         if (!result.Success)
         {
-            ApplyGatewayFailureState(account, result.ReasonCode, actorId);
+            var transition = ApplyGatewayFailureState(account, result.ReasonCode, actorId);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                result.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
 
             await auditService.WriteAsync(
                 AuditEventType.FriendConnectFailed,
@@ -414,6 +1049,7 @@ public sealed partial class AccountService
             account.Status = AccountStatus.Active;
         }
 
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await auditService.WriteAsync(
@@ -433,10 +1069,12 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         var sessionPayload = await EnsureSessionPayloadForGatewayAsync(
             account,
@@ -472,6 +1110,7 @@ public sealed partial class AccountService
         account.LastErrorAt = null;
         account.Status = AccountStatus.Active;
         account.UpdatedBy = actorId;
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -502,125 +1141,109 @@ public sealed partial class AccountService
         return BuildFriendsSnapshotDto(account.Id, metadata);
     }
 
-    public async Task<AccountDto?> AssignParentAsync(
+    public Task<AccountDto?> AssignParentAsync(
         Guid id,
         Guid parentAccountId,
         string actorId,
         string? ip,
-        CancellationToken cancellationToken = default)
-    {
-        if (id == parentAccountId)
-        {
-            throw new InvalidOperationException("Account cannot be parent of itself.");
-        }
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<AccountDto?>(
+            new InvalidOperationException("Manual family assignment is disabled. Use /family/sync."));
 
-        var account = await dbContext.SteamAccounts
-            .Include(x => x.ChildAccounts)
-            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (account is null)
-        {
-            return null;
-        }
-
-        var parent = await dbContext.SteamAccounts
-            .Include(x => x.ChildAccounts)
-            .FirstOrDefaultAsync(x => x.Id == parentAccountId, cancellationToken)
-            ?? throw new InvalidOperationException("Parent account not found.");
-
-        if (account.ParentAccountId == parentAccountId)
-        {
-            return await GetByIdAsync(id, cancellationToken);
-        }
-
-        if (account.ChildAccounts.Count > 0)
-        {
-            throw new InvalidOperationException("Account that already has children cannot become a family child.");
-        }
-
-        if (parent.ParentAccountId is not null)
-        {
-            throw new InvalidOperationException("Selected parent account is already a child in another family group.");
-        }
-
-        account.ParentAccountId = parent.Id;
-        account.UpdatedBy = actorId;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await auditService.WriteAsync(
-            AuditEventType.FamilyParentAssigned,
-            "steam_account",
-            account.Id.ToString(),
-            actorId,
-            ip,
-            new Dictionary<string, string>
-            {
-                ["parentAccountId"] = parent.Id.ToString(),
-                ["parentLogin"] = parent.LoginName
-            },
-            cancellationToken);
-
-        return await GetByIdAsync(id, cancellationToken);
-    }
-
-    public async Task<AccountDto?> RemoveParentAsync(
+    public Task<AccountDto?> RemoveParentAsync(
         Guid id,
         string actorId,
         string? ip,
-        CancellationToken cancellationToken = default)
-    {
-        var account = await dbContext.SteamAccounts.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        if (account is null)
-        {
-            return null;
-        }
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<AccountDto?>(
+            new InvalidOperationException("Manual family assignment is disabled. Use /family/sync."));
 
-        if (account.ParentAccountId is null)
-        {
-            return await GetByIdAsync(id, cancellationToken);
-        }
-
-        account.ParentAccountId = null;
-        account.UpdatedBy = actorId;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await auditService.WriteAsync(
-            AuditEventType.FamilyParentRemoved,
-            "steam_account",
-            account.Id.ToString(),
-            actorId,
-            ip,
-            cancellationToken: cancellationToken);
-
-        return await GetByIdAsync(id, cancellationToken);
-    }
-
-    private async Task<Dictionary<Guid, int>> BuildFamilyCountsAsync(IReadOnlyCollection<Guid> accountIds, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, int>> BuildFamilyCountsAsync(IReadOnlyCollection<Guid> accountIds, CancellationToken cancellationToken)
     {
         if (accountIds.Count == 0)
         {
-            return new Dictionary<Guid, int>();
+            return new Dictionary<string, int>(StringComparer.Ordinal);
         }
 
-        var roots = await dbContext.SteamAccounts
+        var familyKeys = await dbContext.SteamAccounts
             .AsNoTracking()
             .Where(x => accountIds.Contains(x.Id))
-            .Select(x => x.ParentAccountId ?? x.Id)
+            .Select(x => x.SteamFamilyId ?? x.Id.ToString())
             .Distinct()
             .ToArrayAsync(cancellationToken);
 
-        if (roots.Length == 0)
+        if (familyKeys.Length == 0)
         {
-            return new Dictionary<Guid, int>();
+            return new Dictionary<string, int>(StringComparer.Ordinal);
         }
 
         var counts = await dbContext.SteamAccounts
             .AsNoTracking()
-            .Where(x => roots.Contains(x.Id) || (x.ParentAccountId != null && roots.Contains(x.ParentAccountId.Value)))
-            .GroupBy(x => x.ParentAccountId ?? x.Id)
-            .Select(g => new { RootId = g.Key, Count = g.Count() })
+            .Where(x => familyKeys.Contains(x.SteamFamilyId ?? x.Id.ToString()))
+            .GroupBy(x => x.SteamFamilyId ?? x.Id.ToString())
+            .Select(g => new { FamilyKey = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
 
-        return counts.ToDictionary(x => x.RootId, x => x.Count);
+        return counts.ToDictionary(x => x.FamilyKey, x => x.Count, StringComparer.Ordinal);
+    }
+
+    private async Task<string> GenerateUniqueExternalLoginNameAsync(string steamId64, CancellationToken cancellationToken)
+    {
+        var baseLogin = $"external_{steamId64}";
+        var candidate = baseLogin;
+        var suffix = 1;
+        while (await dbContext.SteamAccounts.AnyAsync(x => x.LoginName == candidate, cancellationToken))
+        {
+            suffix++;
+            candidate = $"{baseLogin}_{suffix}";
+        }
+
+        return candidate;
+    }
+
+    private async Task UpsertGamesForAccountAsync(
+        SteamAccount account,
+        IReadOnlyCollection<SteamOwnedGame> games,
+        DateTimeOffset syncedAt,
+        CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.SteamAccountGames
+            .Where(x => x.AccountId == account.Id)
+            .ToListAsync(cancellationToken);
+        var existingByAppId = existing.ToDictionary(x => x.AppId);
+
+        foreach (var game in games)
+        {
+            if (existingByAppId.TryGetValue(game.AppId, out var row))
+            {
+                row.Name = game.Name;
+                row.PlaytimeMinutes = game.PlaytimeMinutes;
+                row.ImgIconUrl = game.ImgIconUrl;
+                row.LastSyncedAt = syncedAt;
+            }
+            else
+            {
+                dbContext.SteamAccountGames.Add(new SteamAccountGame
+                {
+                    AccountId = account.Id,
+                    AppId = game.AppId,
+                    Name = game.Name,
+                    PlaytimeMinutes = game.PlaytimeMinutes,
+                    ImgIconUrl = game.ImgIconUrl,
+                    LastSyncedAt = syncedAt
+                });
+            }
+        }
+
+        var incomingIds = games.Select(x => x.AppId).ToHashSet();
+        var stale = existing.Where(x => !incomingIds.Contains(x.AppId)).ToArray();
+        if (stale.Length > 0)
+        {
+            dbContext.SteamAccountGames.RemoveRange(stale);
+        }
+
+        account.GamesCount = games.Count;
+        account.GamesLastSyncAt = syncedAt;
     }
 
     private static FriendInviteLinkDto BuildFriendInviteLinkDto(Guid accountId, IReadOnlyDictionary<string, string> metadata)

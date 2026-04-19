@@ -16,10 +16,12 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
         var metadata = JsonSerialization.DeserializeDictionary(account.MetadataJson);
@@ -123,9 +125,21 @@ public sealed partial class AccountService
                 account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
                 if (string.Equals(pendingChangeResult.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
                 {
+                    var guardTransition = riskPolicyService.MarkOperationFailure(
+                        account,
+                        SteamReasonCodes.GuardPending,
+                        automated: false,
+                        DateTimeOffset.UtcNow);
                     account.UpdatedBy = actorId;
                     account.LastCheckAt = DateTimeOffset.UtcNow;
                     await dbContext.SaveChangesAsync(cancellationToken);
+                    await WriteRiskAuditAsync(
+                        account,
+                        guardTransition,
+                        actorId,
+                        ip,
+                        SteamReasonCodes.GuardPending,
+                        cancellationToken);
                     return new AccountPasswordChangeResult
                     {
                         Success = false,
@@ -138,8 +152,15 @@ public sealed partial class AccountService
                     };
                 }
 
-                ApplyGatewayFailureState(account, pendingChangeResult.ReasonCode, actorId);
+                var transition = ApplyGatewayFailureState(account, pendingChangeResult.ReasonCode, actorId);
                 await dbContext.SaveChangesAsync(cancellationToken);
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    actorId,
+                    ip,
+                    pendingChangeResult.ReasonCode ?? SteamReasonCodes.Unknown,
+                    cancellationToken);
                 return new AccountPasswordChangeResult
                 {
                     Success = false,
@@ -203,6 +224,11 @@ public sealed partial class AccountService
         {
             if (string.Equals(changeResult.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
             {
+                var guardTransition = riskPolicyService.MarkOperationFailure(
+                    account,
+                    SteamReasonCodes.GuardPending,
+                    automated: false,
+                    DateTimeOffset.UtcNow);
                 var pending = new PendingPasswordChangeState(
                     RequestId: Guid.NewGuid().ToString("N"),
                     ConfirmationContext: TryGetConfirmationContext(changeResult, out var context) ? context : null,
@@ -222,6 +248,13 @@ public sealed partial class AccountService
                 }
 
                 await dbContext.SaveChangesAsync(cancellationToken);
+                await WriteRiskAuditAsync(
+                    account,
+                    guardTransition,
+                    actorId,
+                    ip,
+                    SteamReasonCodes.GuardPending,
+                    cancellationToken);
                 return new AccountPasswordChangeResult
                 {
                     Success = false,
@@ -236,8 +269,15 @@ public sealed partial class AccountService
 
             ClearPendingPasswordChange(metadata);
             account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
-            ApplyGatewayFailureState(account, changeResult.ReasonCode, actorId);
+            var transition = ApplyGatewayFailureState(account, changeResult.ReasonCode, actorId);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                changeResult.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
             return new AccountPasswordChangeResult
             {
                 Success = false,
@@ -265,18 +305,28 @@ public sealed partial class AccountService
         string? ip,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken);
         var account = await dbContext.SteamAccounts
             .Include(x => x.Secret)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
+        await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
 
         var sessionPayload = await EnsureSessionPayloadAsync(account, actorId, ip, currentPassword: null, cancellationToken);
         var result = await steamGateway.DeauthorizeAllSessionsAsync(sessionPayload, cancellationToken);
         if (!result.Success)
         {
+            var transition = ApplyGatewayFailureState(account, result.ReasonCode, actorId);
             account.LastErrorAt = DateTimeOffset.UtcNow;
             account.Status = AccountStatus.Error;
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                result.ReasonCode ?? SteamReasonCodes.Unknown,
+                cancellationToken);
             return result;
         }
 
@@ -286,6 +336,7 @@ public sealed partial class AccountService
         account.UpdatedBy = actorId;
         account.LastSuccessAt = DateTimeOffset.UtcNow;
         account.LastErrorAt = null;
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await auditService.WriteAsync(
@@ -336,6 +387,7 @@ public sealed partial class AccountService
             }
             else
             {
+                var transition = ApplyGatewayFailureState(account, deauth.ReasonCode, actorId);
                 account.LastErrorAt = DateTimeOffset.UtcNow;
                 account.Status = AccountStatus.Active;
                 deauthorizeReasonCode = deauth.ReasonCode;
@@ -343,7 +395,19 @@ public sealed partial class AccountService
                 deauthorizeWarning = string.IsNullOrWhiteSpace(deauth.ErrorMessage)
                     ? "Пароль изменён, но Steam не подтвердил завершение сессий."
                     : $"Пароль изменён, но завершить сессии не удалось: {deauth.ErrorMessage}";
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    actorId,
+                    ip,
+                    deauth.ReasonCode ?? SteamReasonCodes.Unknown,
+                    cancellationToken);
             }
+        }
+
+        if (string.IsNullOrWhiteSpace(deauthorizeReasonCode))
+        {
+            await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

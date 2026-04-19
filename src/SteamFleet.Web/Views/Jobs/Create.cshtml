@@ -166,15 +166,7 @@
                         <option value="@main.Id">@main.LoginName (@main.DisplayName)</option>
                     }
                 </select>
-
-                <label class="form-label" asp-for="FamilyChildAccountIds">Дочерние аккаунты (опционально)</label>
-                <select asp-for="FamilyChildAccountIds" class="form-select" multiple size="8">
-                    @foreach (var account in Model.AvailableAccounts)
-                    {
-                        <option value="@account.Id">@account.LoginName (@account.DisplayName)</option>
-                    }
-                </select>
-                <div class="sf-subtitle mt-1">Если не выбрать child-аккаунты вручную, сервис возьмёт всех детей главного аккаунта из семейной модели.</div>
+                <div class="sf-subtitle mt-1">Цели определяются автоматически по синхронизированной Steam Family выбранного главного аккаунта.</div>
             </div>
 
             <div class="sf-col-12 js-type js-account-select">

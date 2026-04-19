@@ -203,16 +203,6 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
                 {
                     payload["mainAccountId"] = model.FamilyMainAccountId.Value.ToString();
                 }
-
-                var children = model.FamilyChildAccountIds
-                    .Where(x => x != Guid.Empty)
-                    .Distinct()
-                    .ToArray();
-                if (children.Length > 0)
-                {
-                    payload["childAccountIds"] = string.Join('|', children);
-                }
-
                 break;
         }
 
@@ -232,7 +222,7 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
             .ToList();
 
         model.MainAccountOptions = accounts.Items
-            .Where(x => x.ParentAccountId is null)
+            .Where(x => !x.IsExternal && !string.IsNullOrWhiteSpace(x.SteamFamilyId))
             .OrderBy(x => x.LoginName, StringComparer.OrdinalIgnoreCase)
             .Select(x => new CreateJobFormModel.AccountOption(x.Id, x.LoginName, x.DisplayName, x.Status.ToString()))
             .ToList();

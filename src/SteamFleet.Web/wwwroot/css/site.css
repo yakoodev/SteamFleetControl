@@ -139,6 +139,12 @@ a:hover {
     color: #ffd9e3;
 }
 
+.sf-alert-warning {
+    border-color: rgba(242, 189, 87, 0.45);
+    background: rgba(109, 78, 21, 0.46);
+    color: #ffe7be;
+}
+
 .sf-card {
     background: linear-gradient(150deg, rgba(21, 34, 51, 0.95), rgba(16, 28, 43, 0.94));
     border: 1px solid var(--sf-border-soft);
@@ -218,6 +224,12 @@ a:hover {
     background: rgba(144, 169, 200, 0.16);
     color: #d2e5fd;
     border-color: rgba(144, 169, 200, 0.25);
+}
+
+.sf-badge-danger {
+    background: rgba(255, 111, 143, 0.2);
+    color: #ffd8e1;
+    border-color: rgba(255, 111, 143, 0.42);
 }
 
 .sf-btn {

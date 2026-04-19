@@ -2,19 +2,23 @@
 @{
     ViewData["Title"] = "Карточка аккаунта";
     var games = ViewData["Games"] as AccountGamesPageResult ?? new AccountGamesPageResult();
-    var parentCandidates = ViewData["ParentCandidates"] as List<AccountDto> ?? [];
-    var childAccounts = ViewData["ChildAccounts"] as List<AccountDto> ?? [];
+    var familySnapshot = ViewData["FamilySnapshot"] as AccountFamilySnapshotDto ?? new AccountFamilySnapshotDto();
     var gamesScope = ViewData["GamesScope"] as string ?? "all";
     var gamesQuery = ViewData["GamesQuery"] as string ?? string.Empty;
     var friendInvite = ViewData["FriendInviteLink"] as FriendInviteLinkDto;
     var friendsSnapshot = ViewData["FriendsSnapshot"] as AccountFriendsSnapshotDto ?? new AccountFriendsSnapshotDto();
     var friendSourceCandidates = ViewData["FriendSourceCandidates"] as List<AccountDto> ?? [];
+    var familyInviteTargets = ViewData["FamilyInviteTargets"] as List<AccountDto> ?? [];
+    var familyInviteSources = ViewData["FamilyInviteSources"] as List<AccountDto> ?? [];
     var passwordChangePending = ViewData["PasswordChangePending"] as bool? ?? false;
     var pendingPasswordRequestId = ViewData["PasswordChangePendingRequestId"] as string;
     var pendingPasswordExpiresAt = ViewData["PasswordChangePendingExpiresAt"] as string;
     var openPasswordConfirmationModal = string.Equals(TempData["PasswordConfirmationModal"] as string, "1", StringComparison.Ordinal);
     pendingPasswordRequestId ??= TempData["PasswordConfirmationRequestId"] as string;
     pendingPasswordExpiresAt ??= TempData["PasswordConfirmationExpiresAt"] as string;
+    var riskWarning = Model.AutoRetryAfter is not null && Model.AutoRetryAfter > DateTimeOffset.UtcNow
+        ? $"Повышенный риск: {Model.LastRiskReasonCode ?? "Unknown"}. Автоматические повторы безопаснее после {Model.AutoRetryAfter:dd.MM.yyyy HH:mm:ss}."
+        : null;
     var currentGamesPage = games.Page <= 0 ? 1 : games.Page;
     var gamesTotalPages = games.PageSize > 0
         ? Math.Max(1, (int)Math.Ceiling(games.TotalCount / (double)games.PageSize))
@@ -69,6 +73,12 @@
                     <div class="sf-kpi-value fs-6">@Model.LastSuccessAt?.ToString("g")</div>
                 </div>
             </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Риск</div>
+                    <div class="sf-kpi-value fs-6">@Model.RiskLevel</div>
+                </div>
+            </div>
         </div>
     </div>
 </section>
@@ -85,10 +95,29 @@
             <tr><th>Синк игр</th><td>@Model.GamesLastSyncAt?.ToString("g")</td></tr>
             <tr><th>Последняя проверка</th><td>@Model.LastCheckAt?.ToString("g")</td></tr>
             <tr><th>Ошибка</th><td>@Model.LastErrorAt?.ToString("g")</td></tr>
+            <tr><th>Risk level</th><td>@Model.RiskLevel</td></tr>
+            <tr><th>Risk reason</th><td>@Model.LastRiskReasonCode</td></tr>
+            <tr><th>Auto retry after</th><td>@Model.AutoRetryAfter?.ToString("g")</td></tr>
+            <tr><th>Risk signal streak</th><td>@Model.RiskSignalStreak</td></tr>
+            <tr><th>Auth fail streak</th><td>@Model.AuthFailStreak</td></tr>
+            <tr><th>Last sensitive op</th><td>@Model.LastSensitiveOpAt?.ToString("g")</td></tr>
             <tr><th>Заметка</th><td><pre>@Model.Note</pre></td></tr>
         </table>
     </div>
 </section>
+
+@if (!string.IsNullOrWhiteSpace(riskWarning))
+{
+    <section class="sf-card mb-3">
+        <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Риск-профиль аккаунта</h2></div>
+        <div class="sf-card-body">
+            <div class="sf-alert sf-alert-warning">@riskWarning</div>
+            <div class="sf-subtitle">
+                Ручные действия доступны, но автоматика (jobs) будет учитывать окно cooldown и переносить повторы.
+            </div>
+        </div>
+    </section>
+}
 
 <section id="security" class="sf-card mb-3">
     <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Безопасность</h2></div>
@@ -175,59 +204,111 @@
 <section id="family" class="sf-card mb-3">
     <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Семейная группа</h2></div>
     <div class="sf-card-body">
-        <div class="row g-3">
-            <div class="col-xl-6">
-                <div class="sf-subtitle mb-2">Текущий parent</div>
-                @if (Model.ParentAccountId is not null)
-                {
-                    <div class="mb-2">
-                        <span class="sf-badge sf-badge-family">Parent: @Model.ParentLoginName</span>
-                    </div>
-                    <form asp-action="RemoveParent" asp-route-id="@Model.Id" method="post">
-                        <button class="btn sf-btn sf-btn-secondary" type="submit">Убрать parent</button>
-                    </form>
-                }
-                else
-                {
-                    <div class="sf-subtitle">Parent не назначен.</div>
-                }
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+            <div>
+                <div class="sf-subtitle">Источник истины: Steam Family (автоматическая синхронизация).</div>
+                <div class="sf-subtitle">FamilyId: @(familySnapshot.SteamFamilyId ?? "—"), роль: @(familySnapshot.SelfRole ?? "—"), organizer: @familySnapshot.IsOrganizer</div>
+                <div class="sf-subtitle">Последний sync: @familySnapshot.LastSyncedAt?.ToString("g")</div>
             </div>
+            <form asp-action="SyncFamily" asp-route-id="@Model.Id" method="post">
+                <button class="btn sf-btn sf-btn-primary" type="submit">Синхронизировать семью</button>
+            </form>
+        </div>
+
+        <div class="row g-3 mb-3">
             <div class="col-xl-6">
-                <div class="sf-subtitle mb-2">Назначить parent</div>
-                <form asp-action="AssignParent" asp-route-id="@Model.Id" method="post" class="d-flex gap-2 flex-column">
-                    <input type="search" id="parentSearch" class="form-control" placeholder="Поиск main по login / steamid / display" />
-                    <div class="d-flex gap-2">
-                        <select class="form-select" name="ParentAccountId" id="parentSelect" required>
-                            <option value="">Выберите главный аккаунт</option>
-                            @foreach (var candidate in parentCandidates)
+                <div class="sf-subtitle mb-2">Добавить аккаунт в семейную группу</div>
+                <form asp-action="InviteToFamily" asp-route-id="@Model.Id" method="post" class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label" for="familyTargetId">Аккаунт для приглашения</label>
+                        <select id="familyTargetId" name="TargetAccountId" class="form-select" required>
+                            <option value="">Выберите аккаунт</option>
+                            @foreach (var candidate in familyInviteTargets)
                             {
-                                <option value="@candidate.Id"
-                                        data-search="@($"{candidate.LoginName} {candidate.DisplayName} {candidate.SteamId64}".ToLowerInvariant())">
-                                    @candidate.LoginName (@candidate.DisplayName) @candidate.SteamId64
+                                <option value="@candidate.Id">
+                                    @candidate.LoginName (@candidate.DisplayName) — @candidate.SteamId64
                                 </option>
                             }
                         </select>
-                        <button class="btn sf-btn sf-btn-primary" type="submit">Назначить</button>
+                    </div>
+                    <div class="col-12 form-check">
+                        <input id="inviteAsChild" class="form-check-input" type="checkbox" name="InviteAsChild" value="true" checked />
+                        <label class="form-check-label" for="inviteAsChild">Пригласить как Child (иначе Adult)</label>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn sf-btn sf-btn-primary" type="submit">Отправить семейный инвайт</button>
                     </div>
                 </form>
             </div>
-            <div class="col-12">
-                <div class="sf-subtitle mb-2">Дочерние аккаунты</div>
-                @if (childAccounts.Count == 0)
-                {
-                    <div class="sf-subtitle">Нет дочерних аккаунтов.</div>
-                }
-                else
-                {
-                    <div class="d-flex flex-wrap gap-2">
-                        @foreach (var child in childAccounts)
-                        {
-                            <a class="sf-badge sf-badge-owned" asp-action="Details" asp-route-id="@child.Id">@child.LoginName</a>
-                        }
+            <div class="col-xl-6">
+                <div class="sf-subtitle mb-2">Принять семейное приглашение</div>
+                <form asp-action="AcceptFamilyInvite" asp-route-id="@Model.Id" method="post" class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label" for="familySourceId">Организатор (опционально)</label>
+                        <select id="familySourceId" name="SourceAccountId" class="form-select">
+                            <option value="">Любой доступный pending invite</option>
+                            @foreach (var source in familyInviteSources)
+                            {
+                                <option value="@source.Id">
+                                    @source.LoginName (@source.DisplayName) — @source.SteamId64
+                                </option>
+                            }
+                        </select>
+                        <div class="form-text">Если выбран организатор, сервис примет только инвайт от него.</div>
                     </div>
-                }
+                    <div class="col-12">
+                        <button class="btn sf-btn sf-btn-secondary" type="submit">Принять семейный инвайт</button>
+                    </div>
+                </form>
             </div>
         </div>
+
+        @if (familySnapshot.Members.Count == 0)
+        {
+            <div class="sf-subtitle">Данные семьи отсутствуют. Выполните синхронизацию.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>Аккаунт</th>
+                        <th>SteamId</th>
+                        <th>Тип</th>
+                        <th>Роль</th>
+                        <th>Игры</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var member in familySnapshot.Members)
+                    {
+                        <tr>
+                            <td>
+                                @if (member.AccountId is not null)
+                                {
+                                    <a asp-action="Details" asp-route-id="@member.AccountId">@member.LoginName</a>
+                                }
+                                else
+                                {
+                                    @member.LoginName
+                                }
+                                <div class="sf-subtitle">@member.DisplayName</div>
+                            </td>
+                            <td>@member.SteamId64</td>
+                            <td>
+                                <span class="sf-badge @(member.IsExternal ? "sf-badge-muted" : "sf-badge-owned")">
+                                    @(member.IsExternal ? "External" : "Managed")
+                                </span>
+                            </td>
+                            <td>@(member.FamilyRole ?? "—") @(member.IsOrganizer ? "(Organizer)" : "")</td>
+                            <td>@member.GamesCount</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
     </div>
 </section>
 
@@ -450,27 +531,6 @@
 @section Scripts
 {
     <script>
-        (() => {
-            const searchInput = document.getElementById("parentSearch");
-            const select = document.getElementById("parentSelect");
-            if (!searchInput || !select) {
-                return;
-            }
-
-            searchInput.addEventListener("input", () => {
-                const needle = searchInput.value.trim().toLowerCase();
-                Array.from(select.options).forEach((option, index) => {
-                    if (index === 0) {
-                        option.hidden = false;
-                        return;
-                    }
-
-                    const haystack = (option.dataset.search || option.textContent || "").toLowerCase();
-                    option.hidden = needle.length > 0 && !haystack.includes(needle);
-                });
-            });
-        })();
-
         (() => {
             const sourceSelect = document.getElementById("sourceAccountId");
             const inviteInput = document.getElementById("inviteUrl");

@@ -108,8 +108,14 @@ public sealed partial class AccountService
         metadata.Remove(PasswordPendingContextKey);
     }
 
-    private static void ApplyGatewayFailureState(SteamAccount account, string? reasonCode, string actorId)
+    private AccountRiskTransition ApplyGatewayFailureState(
+        SteamAccount account,
+        string? reasonCode,
+        string actorId,
+        bool automated = false)
     {
+        var now = DateTimeOffset.UtcNow;
+        var transition = riskPolicyService.MarkOperationFailure(account, reasonCode, automated, now);
         account.LastErrorAt = DateTimeOffset.UtcNow;
         account.UpdatedBy = actorId;
         account.Status = reasonCode switch
@@ -119,6 +125,7 @@ public sealed partial class AccountService
             SteamReasonCodes.EndpointRejected => AccountStatus.Error,
             _ => AccountStatus.Error
         };
+        return transition;
     }
 
     private static DateTimeOffset? TryParseDate(string? value)
@@ -132,6 +139,106 @@ public sealed partial class AccountService
     {
         return retryable &&
                string.Equals(reasonCode, SteamReasonCodes.AuthSessionMissing, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<IAsyncDisposable> AcquireAccountOperationLockAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        return await operationLock.AcquireAsync(accountId, cancellationToken);
+    }
+
+    private async Task<AccountRiskPrecheck> ApplySensitivePrecheckAsync(
+        SteamAccount account,
+        bool automated,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var precheck = riskPolicyService.EvaluateBeforeOperation(account, automated, now);
+        if (precheck.Delay > TimeSpan.Zero)
+        {
+            await Task.Delay(precheck.Delay, cancellationToken);
+            now = DateTimeOffset.UtcNow;
+        }
+
+        if (precheck.IsBlocked && automated)
+        {
+            throw new SteamGatewayOperationException(
+                $"Auto-retry cooldown is active until {precheck.RetryAfter:O}.",
+                precheck.ReasonCode ?? SteamReasonCodes.CooldownActive,
+                retryable: precheck.Retryable);
+        }
+
+        riskPolicyService.MarkOperationStarted(account, now);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return precheck;
+    }
+
+    private async Task WriteRiskAuditAsync(
+        SteamAccount account,
+        AccountRiskTransition transition,
+        string actorId,
+        string? ip,
+        string reasonCode,
+        CancellationToken cancellationToken)
+    {
+        if (transition.CooldownScheduled)
+        {
+            await auditService.WriteAsync(
+                AuditEventType.RiskCooldownScheduled,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["riskLevel"] = account.RiskLevel.ToString(),
+                    ["reasonCode"] = reasonCode,
+                    ["autoRetryAfter"] = account.AutoRetryAfter?.ToString("O") ?? string.Empty
+                },
+                cancellationToken);
+        }
+
+        if (transition.CurrentLevel != AccountRiskLevel.Normal)
+        {
+            await auditService.WriteAsync(
+                AuditEventType.RiskSignalDetected,
+                "steam_account",
+                account.Id.ToString(),
+                actorId,
+                ip,
+                new Dictionary<string, string>
+                {
+                    ["riskLevel"] = account.RiskLevel.ToString(),
+                    ["reasonCode"] = reasonCode,
+                    ["authFailStreak"] = account.AuthFailStreak.ToString(),
+                    ["riskSignalStreak"] = account.RiskSignalStreak.ToString()
+                },
+                cancellationToken);
+        }
+    }
+
+    private async Task MarkRiskRecoveredAsync(
+        SteamAccount account,
+        string actorId,
+        string? ip,
+        CancellationToken cancellationToken)
+    {
+        var transition = riskPolicyService.MarkOperationSuccess(account, DateTimeOffset.UtcNow);
+        if (!transition.Recovered)
+        {
+            return;
+        }
+
+        await auditService.WriteAsync(
+            AuditEventType.RiskRecovered,
+            "steam_account",
+            account.Id.ToString(),
+            actorId,
+            ip,
+            new Dictionary<string, string>
+            {
+                ["previousLevel"] = transition.PreviousLevel.ToString()
+            },
+            cancellationToken);
     }
 
     private async Task<string> EnsureSessionPayloadForGatewayAsync(
@@ -233,9 +340,21 @@ public sealed partial class AccountService
 
         if (!authResult.Success || string.IsNullOrWhiteSpace(authResult.Session.CookiePayload))
         {
+            var transition = riskPolicyService.MarkOperationFailure(
+                account,
+                SteamReasonCodes.AuthSessionMissing,
+                automated: false,
+                DateTimeOffset.UtcNow);
             account.LastErrorAt = DateTimeOffset.UtcNow;
             account.Status = AccountStatus.RequiresRelogin;
             await dbContext.SaveChangesAsync(cancellationToken);
+            await WriteRiskAuditAsync(
+                account,
+                transition,
+                actorId,
+                ip,
+                SteamReasonCodes.AuthSessionMissing,
+                cancellationToken);
             throw new InvalidOperationException(authResult.ErrorMessage ?? "Steam authentication failed.");
         }
 
@@ -248,6 +367,7 @@ public sealed partial class AccountService
             actorId,
             ip,
             cancellationToken);
+        await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
 
         return authResult.Session.CookiePayload;
     }

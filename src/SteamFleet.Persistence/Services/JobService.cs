@@ -16,8 +16,12 @@ public sealed partial class JobService(
     SteamFleetDbContext dbContext,
     ISteamAccountGateway steamGateway,
     ISecretCryptoService cryptoService,
-    IAuditService auditService) : IJobService
+    IAuditService auditService,
+    IAccountRiskPolicyService? accountRiskPolicyService = null,
+    IAccountOperationLock? accountOperationLock = null) : IJobService
 {
+    private readonly IAccountRiskPolicyService riskPolicyService = accountRiskPolicyService ?? new AccountRiskPolicyService();
+    private readonly IAccountOperationLock operationLock = accountOperationLock ?? new InMemoryAccountOperationLock();
     public async Task<JobDto> CreateAsync(JobCreateRequest request, string actorId, string? ip, CancellationToken cancellationToken = default)
     {
         var payload = new Dictionary<string, string>(request.Payload, StringComparer.OrdinalIgnoreCase);
@@ -83,18 +87,32 @@ public sealed partial class JobService(
                 throw new InvalidOperationException("mainAccountId is required for FriendsConnectFamilyMain.");
             }
 
-            var mainAccountExists = await dbContext.SteamAccounts
-                .AnyAsync(x => x.Id == mainAccountId && x.Status != AccountStatus.Archived, cancellationToken);
-            if (!mainAccountExists)
+            var mainAccount = await dbContext.SteamAccounts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == mainAccountId && x.Status != AccountStatus.Archived, cancellationToken);
+            if (mainAccount is null)
             {
                 throw new InvalidOperationException("Main account is missing or archived.");
+            }
+
+            if (mainAccount.IsExternal)
+            {
+                throw new InvalidOperationException("External account cannot be used as family main for friends connect.");
             }
 
             var childIds = ParseGuidPipe(payload.GetValueOrDefault("childAccountIds"));
             if (childIds.Count == 0)
             {
+                if (string.IsNullOrWhiteSpace(mainAccount.SteamFamilyId))
+                {
+                    throw new InvalidOperationException("Main account is not linked to Steam Family. Run family sync first.");
+                }
+
                 childIds = await dbContext.SteamAccounts
-                    .Where(x => x.ParentAccountId == mainAccountId && x.Status != AccountStatus.Archived)
+                    .Where(x => x.SteamFamilyId == mainAccount.SteamFamilyId &&
+                                x.Id != mainAccount.Id &&
+                                !x.IsExternal &&
+                                x.Status != AccountStatus.Archived)
                     .Select(x => x.Id)
                     .ToListAsync(cancellationToken);
             }
@@ -362,6 +380,7 @@ public sealed partial class JobService(
                 continue;
             }
 
+            await using var operationLease = await operationLock.AcquireAsync(item.AccountId, cancellationToken);
             var account = await dbContext.SteamAccounts
                 .Include(x => x.Secret)
                 .Include(x => x.TagLinks)
@@ -380,6 +399,48 @@ public sealed partial class JobService(
                 item.FinishedAt = DateTimeOffset.UtcNow;
                 job.FailureCount++;
                 continue;
+            }
+
+            if (!job.DryRun)
+            {
+                var precheck = riskPolicyService.EvaluateBeforeOperation(account, automated: true, DateTimeOffset.UtcNow);
+                if (precheck.Delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(precheck.Delay, cancellationToken);
+                }
+
+                if (precheck.IsBlocked)
+                {
+                    var transition = riskPolicyService.MarkOperationFailure(
+                        account,
+                        precheck.ReasonCode ?? SteamReasonCodes.CooldownActive,
+                        automated: true,
+                        DateTimeOffset.UtcNow);
+
+                    item.Status = JobItemStatus.Recoverable;
+                    item.ErrorText = $"Auto-retry cooldown is active until {precheck.RetryAfter:O}.";
+                    item.ResultJson = JsonSerialization.SerializeDictionary(new Dictionary<string, string>
+                    {
+                        ["reasonCode"] = precheck.ReasonCode ?? SteamReasonCodes.CooldownActive,
+                        ["retryable"] = true.ToString(),
+                        ["retryAfter"] = precheck.RetryAfter?.ToString("O") ?? string.Empty
+                    });
+                    account.LastErrorAt = DateTimeOffset.UtcNow;
+                    account.Status = AccountStatus.Error;
+                    await WriteRiskAuditAsync(
+                        account,
+                        transition,
+                        job.CreatedBy ?? "job-worker",
+                        precheck.ReasonCode ?? SteamReasonCodes.CooldownActive,
+                        cancellationToken);
+                    item.FinishedAt = DateTimeOffset.UtcNow;
+                    job.FailureCount++;
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    continue;
+                }
+
+                riskPolicyService.MarkOperationStarted(account, DateTimeOffset.UtcNow);
+                await dbContext.SaveChangesAsync(cancellationToken);
             }
 
             item.StartedAt = DateTimeOffset.UtcNow;
@@ -453,7 +514,13 @@ public sealed partial class JobService(
                             break;
                         }
 
-                        await Task.Delay(GetRetryBackoff(attempt), cancellationToken);
+                        var backoff = GetRetryBackoff(attempt);
+                        if (string.Equals(result.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+                        {
+                            backoff = TimeSpan.FromSeconds(Math.Max(30, (int)backoff.TotalSeconds));
+                        }
+
+                        await Task.Delay(backoff, cancellationToken);
                     }
 
                     item.Status = result.Success
@@ -469,6 +536,7 @@ public sealed partial class JobService(
                     {
                         account.LastSuccessAt = DateTimeOffset.UtcNow;
                         account.LastErrorAt = null;
+                        await MarkRiskRecoveredAsync(account, job.CreatedBy ?? "job-worker", cancellationToken);
                         var keepRequiresRelogin =
                             job.Type == JobType.SessionsDeauthorize ||
                             (job.Type == JobType.PasswordChange &&
@@ -484,8 +552,19 @@ public sealed partial class JobService(
                     }
                     else
                     {
+                        var transition = riskPolicyService.MarkOperationFailure(
+                            account,
+                            result.ReasonCode,
+                            automated: true,
+                            DateTimeOffset.UtcNow);
                         account.LastErrorAt = DateTimeOffset.UtcNow;
                         account.Status = AccountStatus.Error;
+                        await WriteRiskAuditAsync(
+                            account,
+                            transition,
+                            job.CreatedBy ?? "job-worker",
+                            result.ReasonCode,
+                            cancellationToken);
                         await auditService.WriteAsync(
                             AuditEventType.JobItemFailed,
                             "job_item",
@@ -506,6 +585,11 @@ public sealed partial class JobService(
             }
             catch (Exception ex)
             {
+                var transition = riskPolicyService.MarkOperationFailure(
+                    account,
+                    SteamReasonCodes.Unknown,
+                    automated: true,
+                    DateTimeOffset.UtcNow);
                 item.Status = JobItemStatus.Failed;
                 item.ErrorText = ex.Message;
                 item.ResultJson = JsonSerialization.SerializeDictionary(new Dictionary<string, string>
@@ -516,6 +600,12 @@ public sealed partial class JobService(
                 });
                 account.LastErrorAt = DateTimeOffset.UtcNow;
                 account.Status = AccountStatus.Error;
+                await WriteRiskAuditAsync(
+                    account,
+                    transition,
+                    job.CreatedBy ?? "job-worker",
+                    SteamReasonCodes.Unknown,
+                    cancellationToken);
             }
             finally
             {

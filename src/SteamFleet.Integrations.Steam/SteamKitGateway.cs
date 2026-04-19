@@ -120,6 +120,7 @@ public sealed partial class SteamKitGateway(
 
     private readonly SteamGatewayOptions _options = optionsAccessor.Value;
     private readonly ConcurrentDictionary<Guid, QrFlowState> _qrFlows = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _accountFlowLocks = new(StringComparer.Ordinal);
 
     public async Task<SteamAuthResult> AuthenticateAsync(SteamCredentials credentials, CancellationToken cancellationToken = default)
     {
@@ -644,47 +645,55 @@ public sealed partial class SteamKitGateway(
             };
         }
 
-        using var webSession = CreateWebSession(bundle);
-        await WarmupPasswordFlowAsync(webSession, cancellationToken).ConfigureAwait(false);
-
-        var wizardAttempt = await TryChangePasswordViaSupportWizardAsync(
+        return await ExecuteWithAccountFlowLockAsync(
                 bundle,
-                currentPassword,
-                newPassword,
-                confirmationCode,
-                confirmationContext,
-                webSession,
+                flowName: "confirmations",
+                async token =>
+                {
+                    using var webSession = CreateWebSession(bundle);
+                    await WarmupPasswordFlowAsync(webSession, token).ConfigureAwait(false);
+
+                    var wizardAttempt = await TryChangePasswordViaSupportWizardAsync(
+                            bundle,
+                            currentPassword,
+                            newPassword,
+                            confirmationCode,
+                            confirmationContext,
+                            webSession,
+                            token)
+                        .ConfigureAwait(false);
+                    if (wizardAttempt.Success)
+                    {
+                        return wizardAttempt;
+                    }
+
+                    if (string.Equals(wizardAttempt.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return wizardAttempt;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(confirmationCode))
+                    {
+                        return wizardAttempt;
+                    }
+
+                    var storeAttempt = await TryChangePasswordViaStoreAccountAsync(bundle, currentPassword, newPassword, webSession, token)
+                        .ConfigureAwait(false);
+                    if (storeAttempt.Success)
+                    {
+                        return storeAttempt;
+                    }
+
+                    var reason = SelectPasswordFailureReason(wizardAttempt, storeAttempt);
+
+                    var retryable = wizardAttempt.Retryable || storeAttempt.Retryable;
+                    return Failure(
+                        $"Password change failed. Wizard: {wizardAttempt.ErrorMessage}; Store: {storeAttempt.ErrorMessage}",
+                        reason,
+                        retryable);
+                },
                 cancellationToken)
             .ConfigureAwait(false);
-        if (wizardAttempt.Success)
-        {
-            return wizardAttempt;
-        }
-
-        if (string.Equals(wizardAttempt.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
-        {
-            return wizardAttempt;
-        }
-
-        if (!string.IsNullOrWhiteSpace(confirmationCode))
-        {
-            return wizardAttempt;
-        }
-
-        var storeAttempt = await TryChangePasswordViaStoreAccountAsync(bundle, currentPassword, newPassword, webSession, cancellationToken)
-            .ConfigureAwait(false);
-        if (storeAttempt.Success)
-        {
-            return storeAttempt;
-        }
-
-        var reason = SelectPasswordFailureReason(wizardAttempt, storeAttempt);
-
-        var retryable = wizardAttempt.Retryable || storeAttempt.Retryable;
-        return Failure(
-            $"Password change failed. Wizard: {wizardAttempt.ErrorMessage}; Store: {storeAttempt.ErrorMessage}",
-            reason,
-            retryable);
     }
 
     public async Task<SteamOperationResult> DeauthorizeAllSessionsAsync(
@@ -871,45 +880,53 @@ public sealed partial class SteamKitGateway(
                 retryable: false);
         }
 
-        try
-        {
-            try
-            {
-                var fromWeb = await TryGetFriendInviteLinkFromWebAsync(bundle, cancellationToken).ConfigureAwait(false);
-                if (fromWeb is not null)
+        return await ExecuteWithAccountFlowLockAsync(
+                bundle,
+                flowName: "confirmations",
+                async token =>
                 {
-                    return fromWeb;
-                }
-            }
-            catch (SteamGatewayOperationException ex)
-            {
-                logger.LogInformation(
-                    ex,
-                    "Steam quick-invite web flow was unavailable; using deterministic invite-code fallback. steamId={SteamId} reason={ReasonCode}",
-                    bundle.SteamId64,
-                    ex.ReasonCode);
-            }
+                    try
+                    {
+                        try
+                        {
+                            var fromWeb = await TryGetFriendInviteLinkFromWebAsync(bundle, token).ConfigureAwait(false);
+                            if (fromWeb is not null)
+                            {
+                                return fromWeb;
+                            }
+                        }
+                        catch (SteamGatewayOperationException ex)
+                        {
+                            logger.LogInformation(
+                                ex,
+                                "Steam quick-invite web flow was unavailable; using deterministic invite-code fallback. steamId={SteamId} reason={ReasonCode}",
+                                bundle.SteamId64,
+                                ex.ReasonCode);
+                        }
 
-            var inviteCode = CreateFriendCode(steamId64);
-            return new SteamFriendInviteLink
-            {
-                InviteCode = inviteCode,
-                InviteToken = string.Empty,
-                InviteUrl = $"https://s.team/p/{inviteCode}",
-                SyncedAt = DateTimeOffset.UtcNow
-            };
-        }
-        catch (SteamGatewayOperationException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to sync friend invite link for steamId={SteamId}", bundle.SteamId64);
-            throw ClassifyGatewayException(
-                ex,
-                "Could not sync Steam quick-invite link.");
-        }
+                        var inviteCode = CreateFriendCode(steamId64);
+                        return new SteamFriendInviteLink
+                        {
+                            InviteCode = inviteCode,
+                            InviteToken = string.Empty,
+                            InviteUrl = $"https://s.team/p/{inviteCode}",
+                            SyncedAt = DateTimeOffset.UtcNow
+                        };
+                    }
+                    catch (SteamGatewayOperationException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to sync friend invite link for steamId={SteamId}", bundle.SteamId64);
+                        throw ClassifyGatewayException(
+                            ex,
+                            "Could not sync Steam quick-invite link.");
+                    }
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<SteamOperationResult> AcceptFriendInviteAsync(
@@ -927,134 +944,142 @@ public sealed partial class SteamKitGateway(
             return Failure("Malformed quick-invite link.", SteamReasonCodes.InvalidInviteLink);
         }
 
-        try
-        {
-            var webAttempt = await TryAcceptFriendInviteViaCommunityWebAsync(bundle, sourceSteamId, cancellationToken).ConfigureAwait(false);
-            if (webAttempt.Success)
-            {
-                webAttempt.Data["sourceSteamId"] = sourceSteamId.ToString(CultureInfo.InvariantCulture);
-                webAttempt.Data["inviteTokenTail"] = inviteToken.Length > 6 ? inviteToken[^6..] : inviteToken;
-                webAttempt.Data["inviteKind"] = string.IsNullOrWhiteSpace(inviteToken) ? "short_code" : "token";
-                return webAttempt;
-            }
-
-            var shouldFallbackToCm =
-                webAttempt.Retryable &&
-                (string.Equals(webAttempt.ReasonCode, SteamReasonCodes.EndpointRejected, StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(webAttempt.ReasonCode, SteamReasonCodes.Unknown, StringComparison.OrdinalIgnoreCase));
-
-            if (!shouldFallbackToCm)
-            {
-                return webAttempt;
-            }
-
-            if (string.IsNullOrWhiteSpace(inviteToken))
-            {
-                await ExecuteWithLoggedOnSteamClientAsync(
-                        bundle,
-                        async (_, _, _, steamFriends, callbackManager, token) =>
-                        {
-                            var targetSteamId = new SteamID(sourceSteamId);
-                            var addResultTcs = new TaskCompletionSource<SteamFriends.FriendAddedCallback>(TaskCreationOptions.RunContinuationsAsynchronously);
-                            callbackManager.Subscribe<SteamFriends.FriendAddedCallback>(callback =>
-                            {
-                                if (callback.SteamID == targetSteamId)
-                                {
-                                    addResultTcs.TrySetResult(callback);
-                                }
-                            });
-
-                            steamFriends.AddFriend(targetSteamId);
-
-                            SteamFriends.FriendAddedCallback? callback = null;
-                            try
-                            {
-                                callback = await addResultTcs.Task.WaitAsync(TimeSpan.FromSeconds(10), token).ConfigureAwait(false);
-                            }
-                            catch (TimeoutException)
-                            {
-                                // Fallback to relationship check below.
-                            }
-
-                            var relationship = steamFriends.GetFriendRelationship(targetSteamId);
-                            var acceptedByRelationship =
-                                relationship is EFriendRelationship.Friend or
-                                EFriendRelationship.RequestInitiator or
-                                EFriendRelationship.RequestRecipient;
-                            var acceptedByCallback = callback is not null && callback.Result == EResult.OK;
-
-                            if (!acceptedByRelationship && !acceptedByCallback)
-                            {
-                                var callbackResult = callback?.Result.ToString() ?? "NoCallback";
-                                throw new InvalidOperationException(
-                                    $"AddFriend failed: relationship={relationship}; callback={callbackResult}.");
-                            }
-
-                            return true;
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                await ExecuteWithLoggedOnSteamClientAsync(
-                        bundle,
-                        async (_, _, unified, _, _, token) =>
-                        {
-                            var userAccount = unified.CreateService<UserAccount>();
-                            var response = await userAccount
-                                .RedeemFriendInviteToken(new CUserAccount_RedeemFriendInviteToken_Request
-                                {
-                                    steamid = sourceSteamId,
-                                    invite_token = inviteToken
-                                })
-                                .ToTask()
-                                .WaitAsync(token)
-                                .ConfigureAwait(false);
-
-                            if (response.Result != EResult.OK)
-                            {
-                                throw new InvalidOperationException($"RedeemFriendInviteToken failed: {response.Result}");
-                            }
-
-                            return true;
-                        },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            return new SteamOperationResult
-            {
-                Success = true,
-                ReasonCode = SteamReasonCodes.None,
-                Data = new Dictionary<string, string>
+        return await ExecuteWithAccountFlowLockAsync(
+                bundle,
+                flowName: "confirmations",
+                async _ =>
                 {
-                    ["sourceSteamId"] = sourceSteamId.ToString(CultureInfo.InvariantCulture),
-                    ["inviteTokenTail"] = inviteToken.Length > 6 ? inviteToken[^6..] : inviteToken,
-                    ["inviteKind"] = string.IsNullOrWhiteSpace(inviteToken) ? "short_code" : "token"
-                }
-            };
-        }
-        catch (SteamGatewayOperationException ex)
-        {
-            logger.LogWarning(ex, "Friend invite redemption failed for steamId={SteamId}; reason={ReasonCode}", bundle.SteamId64, ex.ReasonCode);
-            return Failure(ex.Message, ex.ReasonCode ?? SteamReasonCodes.Unknown, ex.Retryable);
-        }
-        catch (TimeoutException tex)
-        {
-            logger.LogWarning(tex, "Friend invite redemption timeout for steamId={SteamId}", bundle.SteamId64);
-            return Failure("Friend invite redemption timed out.", SteamReasonCodes.Timeout, retryable: true);
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("RateLimit", StringComparison.OrdinalIgnoreCase))
-        {
-            logger.LogWarning(ex, "Friend invite redemption rate-limited for steamId={SteamId}", bundle.SteamId64);
-            return Failure("Steam rate limited invite redemption.", SteamReasonCodes.AntiBotBlocked, retryable: true);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Friend invite redemption failed for steamId={SteamId}", bundle.SteamId64);
-            return Failure("Could not redeem quick-invite link.", SteamReasonCodes.Unknown, retryable: true);
-        }
+                    try
+                    {
+                        var webAttempt = await TryAcceptFriendInviteViaCommunityWebAsync(bundle, sourceSteamId, cancellationToken).ConfigureAwait(false);
+                        if (webAttempt.Success)
+                        {
+                            webAttempt.Data["sourceSteamId"] = sourceSteamId.ToString(CultureInfo.InvariantCulture);
+                            webAttempt.Data["inviteTokenTail"] = inviteToken.Length > 6 ? inviteToken[^6..] : inviteToken;
+                            webAttempt.Data["inviteKind"] = string.IsNullOrWhiteSpace(inviteToken) ? "short_code" : "token";
+                            return webAttempt;
+                        }
+
+                        var shouldFallbackToCm =
+                            webAttempt.Retryable &&
+                            (string.Equals(webAttempt.ReasonCode, SteamReasonCodes.EndpointRejected, StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(webAttempt.ReasonCode, SteamReasonCodes.Unknown, StringComparison.OrdinalIgnoreCase));
+
+                        if (!shouldFallbackToCm)
+                        {
+                            return webAttempt;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(inviteToken))
+                        {
+                            await ExecuteWithLoggedOnSteamClientAsync(
+                                    bundle,
+                                    async (_, _, _, steamFriends, callbackManager, token) =>
+                                    {
+                                        var targetSteamId = new SteamID(sourceSteamId);
+                                        var addResultTcs = new TaskCompletionSource<SteamFriends.FriendAddedCallback>(TaskCreationOptions.RunContinuationsAsynchronously);
+                                        callbackManager.Subscribe<SteamFriends.FriendAddedCallback>(callback =>
+                                        {
+                                            if (callback.SteamID == targetSteamId)
+                                            {
+                                                addResultTcs.TrySetResult(callback);
+                                            }
+                                        });
+
+                                        steamFriends.AddFriend(targetSteamId);
+
+                                        SteamFriends.FriendAddedCallback? callback = null;
+                                        try
+                                        {
+                                            callback = await addResultTcs.Task.WaitAsync(TimeSpan.FromSeconds(10), token).ConfigureAwait(false);
+                                        }
+                                        catch (TimeoutException)
+                                        {
+                                            // Fallback to relationship check below.
+                                        }
+
+                                        var relationship = steamFriends.GetFriendRelationship(targetSteamId);
+                                        var acceptedByRelationship =
+                                            relationship is EFriendRelationship.Friend or
+                                            EFriendRelationship.RequestInitiator or
+                                            EFriendRelationship.RequestRecipient;
+                                        var acceptedByCallback = callback is not null && callback.Result == EResult.OK;
+
+                                        if (!acceptedByRelationship && !acceptedByCallback)
+                                        {
+                                            var callbackResult = callback?.Result.ToString() ?? "NoCallback";
+                                            throw new InvalidOperationException(
+                                                $"AddFriend failed: relationship={relationship}; callback={callbackResult}.");
+                                        }
+
+                                        return true;
+                                    },
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await ExecuteWithLoggedOnSteamClientAsync(
+                                    bundle,
+                                    async (_, _, unified, _, _, token) =>
+                                    {
+                                        var userAccount = unified.CreateService<UserAccount>();
+                                        var response = await userAccount
+                                            .RedeemFriendInviteToken(new CUserAccount_RedeemFriendInviteToken_Request
+                                            {
+                                                steamid = sourceSteamId,
+                                                invite_token = inviteToken
+                                            })
+                                            .ToTask()
+                                            .WaitAsync(token)
+                                            .ConfigureAwait(false);
+
+                                        if (response.Result != EResult.OK)
+                                        {
+                                            throw new InvalidOperationException($"RedeemFriendInviteToken failed: {response.Result}");
+                                        }
+
+                                        return true;
+                                    },
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+
+                        return new SteamOperationResult
+                        {
+                            Success = true,
+                            ReasonCode = SteamReasonCodes.None,
+                            Data = new Dictionary<string, string>
+                            {
+                                ["sourceSteamId"] = sourceSteamId.ToString(CultureInfo.InvariantCulture),
+                                ["inviteTokenTail"] = inviteToken.Length > 6 ? inviteToken[^6..] : inviteToken,
+                                ["inviteKind"] = string.IsNullOrWhiteSpace(inviteToken) ? "short_code" : "token"
+                            }
+                        };
+                    }
+                    catch (SteamGatewayOperationException ex)
+                    {
+                        logger.LogWarning(ex, "Friend invite redemption failed for steamId={SteamId}; reason={ReasonCode}", bundle.SteamId64, ex.ReasonCode);
+                        return Failure(ex.Message, ex.ReasonCode ?? SteamReasonCodes.Unknown, ex.Retryable);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        logger.LogWarning(tex, "Friend invite redemption timeout for steamId={SteamId}", bundle.SteamId64);
+                        return Failure("Friend invite redemption timed out.", SteamReasonCodes.Timeout, retryable: true);
+                    }
+                    catch (InvalidOperationException ex) when (ex.Message.Contains("RateLimit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        logger.LogWarning(ex, "Friend invite redemption rate-limited for steamId={SteamId}", bundle.SteamId64);
+                        return Failure("Steam rate limited invite redemption.", SteamReasonCodes.AuthThrottled, retryable: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Friend invite redemption failed for steamId={SteamId}", bundle.SteamId64);
+                        return Failure("Could not redeem quick-invite link.", SteamReasonCodes.Unknown, retryable: true);
+                    }
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<SteamFriendsSnapshot> GetFriendsSnapshotAsync(

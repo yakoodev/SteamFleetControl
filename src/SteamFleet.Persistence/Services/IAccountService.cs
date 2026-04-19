@@ -25,6 +25,10 @@ public interface IAccountService
     Task<SteamOperationResult> DeauthorizeAllSessionsAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<AccountGamesPageResult> RefreshGamesAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<AccountGamesPageResult> GetGamesAsync(Guid id, AccountGamesScope scope, string? query, int page, int pageSize, CancellationToken cancellationToken = default);
+    Task<AccountFamilySnapshotDto> SyncFamilyFromSteamAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<AccountFamilySnapshotDto> GetFamilySnapshotAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> InviteToFamilyAsync(Guid id, FamilyInviteRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptFamilyInviteAsync(Guid id, FamilyAcceptInviteRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<FriendInviteLinkDto?> GetFriendInviteLinkAsync(Guid id, CancellationToken cancellationToken = default);
     Task<FriendInviteLinkDto> SyncFriendInviteLinkAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamOperationResult> AcceptFriendInviteAsync(Guid id, string inviteUrl, string actorId, string? ip, CancellationToken cancellationToken = default);

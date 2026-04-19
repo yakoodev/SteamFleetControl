@@ -27,7 +27,6 @@ public sealed class CreateJobFormModel
     public string? NoteText { get; set; }
     public string? AvatarBase64 { get; set; }
     public Guid? FamilyMainAccountId { get; set; }
-    public List<Guid> FamilyChildAccountIds { get; set; } = [];
     public List<FriendPairFormItem> FriendsPairs { get; set; } =
     [
         new FriendPairFormItem()

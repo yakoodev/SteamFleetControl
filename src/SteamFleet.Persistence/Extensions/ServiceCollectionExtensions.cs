@@ -27,6 +27,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISecretCryptoService>(_ => new AesGcmSecretCryptoService(masterKey ?? string.Empty));
 
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IAccountRiskPolicyService, AccountRiskPolicyService>();
+        services.AddSingleton<IAccountOperationLock, AccountOperationLock>();
         services.AddScoped<IAccountService, AccountService>();
         services.AddScoped<IJobService, JobService>();
         services.AddScoped<HangfireJobExecutor>();

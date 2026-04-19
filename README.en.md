@@ -19,7 +19,7 @@ SteamFleetControl is a .NET 8 modular monolith for operating Steam accounts at s
 - Encrypted secret storage (AES-GCM, master key outside DB).
 - Steam integration for auth/session/profile/privacy/avatar/password/deauthorize/friends/games.
 - QR onboarding on the account creation page: scan in Steam Guard and auto-create account card.
-- Account import/export, tags, folders, and family-group model.
+- Account import/export, tags, folders, and automatic Steam Family sync (including external members).
 - Hangfire-powered batch jobs (retry/backoff, dry-run, cancel, reports).
 - Business-level audit events and security observability.
 

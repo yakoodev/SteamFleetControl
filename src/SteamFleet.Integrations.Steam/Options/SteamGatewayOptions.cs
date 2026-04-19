@@ -7,5 +7,9 @@ public sealed class SteamGatewayOptions
     public int AuthTimeoutSeconds { get; set; } = 120;
     public int WebTimeoutSeconds { get; set; } = 30;
     public int QrFlowTtlSeconds { get; set; } = 180;
+    public int MinSensitiveIntervalSeconds { get; set; } = 3;
+    public int AutoRetryCooldownMinutes { get; set; } = 20;
+    public int GuardRetryDelaySeconds { get; set; } = 30;
+    public int MaxAuthFailuresBeforeCooldown { get; set; } = 3;
     public string UserAgent { get; set; } = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SteamFleet/1.0";
 }

@@ -15,8 +15,6 @@ public sealed partial class AccountService
         var query = dbContext.SteamAccounts
             .AsNoTracking()
             .Include(x => x.Folder)
-            .Include(x => x.ParentAccount)
-            .Include(x => x.ChildAccounts)
             .Include(x => x.TagLinks)
             .ThenInclude(x => x.Tag)
             .AsQueryable();
@@ -52,15 +50,16 @@ public sealed partial class AccountService
             var familyGroup = request.FamilyGroup.Trim();
             if (familyGroup.Equals("ungrouped", StringComparison.OrdinalIgnoreCase))
             {
-                query = query.Where(x => x.ParentAccountId == null && !x.ChildAccounts.Any());
+                query = query.Where(x => string.IsNullOrWhiteSpace(x.SteamFamilyId));
             }
-            else if (familyGroup.Equals("main", StringComparison.OrdinalIgnoreCase))
+            else if (familyGroup.Equals("family", StringComparison.OrdinalIgnoreCase) ||
+                     familyGroup.Equals("with", StringComparison.OrdinalIgnoreCase))
             {
-                query = query.Where(x => x.ParentAccountId == null && x.ChildAccounts.Any());
+                query = query.Where(x => !string.IsNullOrWhiteSpace(x.SteamFamilyId));
             }
-            else if (Guid.TryParse(familyGroup, out var mainAccountId))
+            else
             {
-                query = query.Where(x => x.Id == mainAccountId || x.ParentAccountId == mainAccountId);
+                query = query.Where(x => x.SteamFamilyId == familyGroup);
             }
         }
 
@@ -80,7 +79,7 @@ public sealed partial class AccountService
         return new AccountsPageResult
         {
             TotalCount = total,
-            Items = items.Select(x => MapAccountDto(x, familyCounts.GetValueOrDefault(x.ParentAccountId ?? x.Id, 1))).ToArray()
+            Items = items.Select(x => MapAccountDto(x, familyCounts.GetValueOrDefault(x.SteamFamilyId ?? x.Id.ToString(), 1))).ToArray()
         };
     }
 
@@ -89,8 +88,6 @@ public sealed partial class AccountService
         var entity = await dbContext.SteamAccounts
             .AsNoTracking()
             .Include(x => x.Folder)
-            .Include(x => x.ParentAccount)
-            .Include(x => x.ChildAccounts)
             .Include(x => x.TagLinks)
             .ThenInclude(x => x.Tag)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -101,7 +98,7 @@ public sealed partial class AccountService
         }
 
         var familyCounts = await BuildFamilyCountsAsync([entity.Id], cancellationToken);
-        return MapAccountDto(entity, familyCounts.GetValueOrDefault(entity.ParentAccountId ?? entity.Id, 1));
+        return MapAccountDto(entity, familyCounts.GetValueOrDefault(entity.SteamFamilyId ?? entity.Id.ToString(), 1));
     }
 
     public async Task<AccountDto> CreateAsync(AccountUpsertRequest request, string actorId, string? ip, CancellationToken cancellationToken = default)
@@ -265,6 +262,7 @@ public sealed partial class AccountService
             Status = filter.Status,
             FolderId = filter.FolderId,
             Tag = filter.Tag,
+            FamilyGroup = filter.FamilyGroup,
             Page = 1,
             PageSize = 5000
         }, cancellationToken);
@@ -280,7 +278,9 @@ public sealed partial class AccountService
         csv.WriteField("profileUrl");
         csv.WriteField("email");
         csv.WriteField("folder");
-        csv.WriteField("parentLogin");
+        csv.WriteField("familyId");
+        csv.WriteField("familyRole");
+        csv.WriteField("isExternal");
         csv.WriteField("gamesCount");
         csv.WriteField("status");
         csv.WriteField("tags");
@@ -296,7 +296,9 @@ public sealed partial class AccountService
             csv.WriteField(item.ProfileUrl);
             csv.WriteField(item.Email);
             csv.WriteField(item.FolderName);
-            csv.WriteField(item.ParentLoginName);
+            csv.WriteField(item.SteamFamilyId);
+            csv.WriteField(item.SteamFamilyRole);
+            csv.WriteField(item.IsExternal);
             csv.WriteField(item.GamesCount);
             csv.WriteField(item.Status);
             csv.WriteField(string.Join('|', item.Tags));
