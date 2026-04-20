@@ -3,35 +3,45 @@
     ViewData["Title"] = "Создать аккаунт";
 }
 
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Новый Steam-аккаунт</h1>
+        <div class="sf-page-subtitle">Добавьте аккаунт вручную или через QR-онбординг Steam Guard.</div>
+    </div>
+    <a class="btn sf-btn sf-btn-secondary" asp-action="Index">К списку аккаунтов</a>
+</section>
+
 <section class="sf-card">
     <div class="sf-card-head">
-        <h1 class="sf-title">Новый Steam-аккаунт</h1>
-        <div class="sf-subtitle">Поддержка login/password, maFile, Guard и живой сессии Steam</div>
+        <h2 class="sf-title h4 mb-0">Создание карточки</h2>
+        <div class="sf-subtitle">Поддержка login/password, maFile, Guard и живой session Steam.</div>
     </div>
     <div class="sf-card-body">
+        <div asp-validation-summary="ModelOnly" class="text-danger mb-2"></div>
         <div class="sf-alert sf-alert-success mb-3">
-            <strong>Подсказка по добавлению:</strong> сначала сохраните карточку с login + секретами,
-            затем откройте карточку аккаунта и нажмите <strong>Авторизовать</strong>, чтобы записать актуальную Steam-session.
+            <strong>Рекомендуемый порядок:</strong> 1) создайте карточку с `login + secrets`, 2) откройте её и нажмите <strong>Авторизовать</strong>, 3) после успешного входа выполните refresh игр/семьи/друзей.
         </div>
         <div class="sf-alert sf-alert-warning mb-3">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div>
-                    <strong>Быстрое добавление через QR (Steam Guard):</strong> нажмите кнопку, отсканируйте код в мобильном приложении Steam
-                    и сервис автоматически создаст аккаунт с валидной сессией.
+                    <strong>Быстрое добавление через QR (Steam Guard):</strong> нажмите кнопку, отсканируйте код в мобильном приложении Steam и сервис автоматически создаст аккаунт с валидной session.
                 </div>
                 <button type="button" id="startQrOnboarding" class="btn sf-btn sf-btn-primary">Добавить через QR</button>
             </div>
             <div class="sf-subtitle mt-2">После QR-онбординга пароль/секреты можно заполнить позже в карточке аккаунта.</div>
+            <div class="sf-subtitle mt-1">Анти-риск режим: запускайте QR по одному аккаунту за раз и избегайте частых повторных входов подряд.</div>
         </div>
         <form asp-action="CreatePost" method="post" class="sf-grid">
             <div class="sf-col-12"><h2 class="sf-title h6 mb-0">1. Базовые данные</h2></div>
             <div class="sf-col-3">
                 <label asp-for="LoginName" class="form-label">Login</label>
                 <input asp-for="LoginName" class="form-control" required autocomplete="off" />
+                <div class="form-text">Логин Steam без `https://` и без профиля.</div>
             </div>
             <div class="sf-col-3">
                 <label asp-for="Password" class="form-label">Пароль Steam</label>
                 <input asp-for="Password" type="password" class="form-control" autocomplete="new-password" />
+                <div class="form-text">Можно оставить пустым и пройти авторизацию позже.</div>
             </div>
             <div class="sf-col-3">
                 <label asp-for="DisplayName" class="form-label">Display Name</label>
@@ -46,10 +56,12 @@
             <div class="sf-col-4">
                 <label asp-for="SharedSecret" class="form-label">Shared Secret (base64)</label>
                 <input asp-for="SharedSecret" class="form-control" autocomplete="off" />
+                <div class="form-text">Используется для генерации Guard-кодов.</div>
             </div>
             <div class="sf-col-4">
                 <label asp-for="IdentitySecret" class="form-label">Identity Secret (base64)</label>
                 <input asp-for="IdentitySecret" class="form-control" autocomplete="off" />
+                <div class="form-text">Нужен для подтверждений в мобильном Guard.</div>
             </div>
             <div class="sf-col-4">
                 <label asp-for="RecoveryPayload" class="form-label">GuardData (опционально)</label>
@@ -58,7 +70,7 @@
             <div class="sf-col-12">
                 <label class="form-label" for="maFile">Импорт maFile (.json)</label>
                 <input id="maFile" type="file" class="form-control" accept=".json,application/json" />
-                <div class="sf-subtitle mt-1">Если выбрать maFile, сервис заполнит `LoginName`, `SharedSecret`, `IdentitySecret` автоматически.</div>
+                <div class="form-text">Если выбрать maFile, сервис автоматически заполнит `LoginName`, `SharedSecret`, `IdentitySecret`.</div>
             </div>
 
             <div class="sf-col-12"><h2 class="sf-title h6 mb-0 mt-2">3. Организация и сервисные поля</h2></div>
@@ -77,6 +89,7 @@
             <div class="sf-col-6">
                 <label asp-for="SessionPayload" class="form-label">Session payload (если уже есть валидная session)</label>
                 <textarea asp-for="SessionPayload" rows="3" class="form-control"></textarea>
+                <div class="form-text">Опционально. Обычно поле формируется после кнопки "Авторизовать" в карточке.</div>
             </div>
             <div class="sf-col-6">
                 <label asp-for="Note" class="form-label">Примечание</label>
@@ -132,6 +145,7 @@
 
 @section Scripts
 {
+    <partial name="_ValidationScriptsPartial" />
     <script>
         (() => {
             const fileInput = document.getElementById("maFile");

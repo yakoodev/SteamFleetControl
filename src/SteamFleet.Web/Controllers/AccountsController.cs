@@ -235,8 +235,14 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
                 return RedirectToAction(nameof(Details), new { id });
             }
 
-            var successMessage = result.NewPassword is not null
-                ? $"Пароль изменен. Новый пароль: {result.NewPassword}"
+            if (result.WasGenerated && !string.IsNullOrWhiteSpace(result.NewPassword))
+            {
+                TempData["PasswordGeneratedModal"] = "1";
+                TempData["PasswordGeneratedValue"] = result.NewPassword;
+            }
+
+            var successMessage = result.WasGenerated
+                ? "Пароль изменен. Сгенерированный пароль показан в модальном окне (показывается один раз)."
                 : "Пароль изменен.";
 
             if (!string.IsNullOrWhiteSpace(result.ErrorMessage))

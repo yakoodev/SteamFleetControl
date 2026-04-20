@@ -349,27 +349,6 @@ public sealed partial class AccountService(
         result.ErrorMessage = null;
         result.CreatedAccount = MapAccountDto(created, familyCount: 1);
 
-        try
-        {
-            await SyncFamilyFromSteamAsync(created.Id, actorId, ip, cancellationToken);
-            result.CreatedAccount = await GetByIdAsync(created.Id, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            await auditService.WriteAsync(
-                AuditEventType.SystemError,
-                "steam_account",
-                created.Id.ToString(),
-                actorId,
-                ip,
-                new Dictionary<string, string>
-                {
-                    ["operation"] = "family_auto_sync",
-                    ["error"] = ex.Message
-                },
-                cancellationToken);
-        }
-
         await auditService.WriteAsync(
             AuditEventType.AccountCreated,
             "steam_account",
@@ -445,7 +424,6 @@ public sealed partial class AccountService(
         CancellationToken cancellationToken = default)
     {
         SteamQrAuthPollResult poll;
-        var shouldSyncFamily = false;
 
         await using (var operationLease = await AcquireAccountOperationLockAsync(id, cancellationToken))
         {
@@ -470,7 +448,6 @@ public sealed partial class AccountService(
                     ip,
                     cancellationToken);
                 await MarkRiskRecoveredAsync(account, actorId, ip, cancellationToken);
-                shouldSyncFamily = true;
             }
             else if (poll.Status is SteamQrAuthStatus.Failed or SteamQrAuthStatus.Expired)
             {
@@ -504,29 +481,6 @@ public sealed partial class AccountService(
                     ["status"] = poll.Status.ToString()
                 },
                 cancellationToken);
-        }
-
-        if (shouldSyncFamily)
-        {
-            try
-            {
-                await SyncFamilyFromSteamAsync(id, actorId, ip, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                await auditService.WriteAsync(
-                    AuditEventType.SystemError,
-                    "steam_account",
-                    id.ToString(),
-                    actorId,
-                    ip,
-                    new Dictionary<string, string>
-                    {
-                        ["operation"] = "family_auto_sync",
-                        ["error"] = ex.Message
-                    },
-                    cancellationToken);
-            }
         }
 
         return poll;

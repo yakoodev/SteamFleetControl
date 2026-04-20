@@ -110,6 +110,12 @@ a:hover {
     background: rgba(102, 192, 244, 0.12);
 }
 
+.sf-nav-link.is-active {
+    color: var(--sf-text);
+    background: rgba(102, 192, 244, 0.2);
+    border: 1px solid rgba(102, 192, 244, 0.38);
+}
+
 .sf-user {
     color: var(--sf-text-muted);
     font-size: 0.88rem;
@@ -117,6 +123,11 @@ a:hover {
 
 .sf-main {
     padding: 1.1rem 0.75rem 1.5rem;
+}
+
+.sf-shell {
+    width: min(1680px, 100%);
+    margin: 0 auto;
 }
 
 .sf-alert {
@@ -139,10 +150,86 @@ a:hover {
     color: #ffd9e3;
 }
 
+.sf-alert-close {
+    opacity: 0.75;
+    margin-top: 0.15rem;
+}
+
+.sf-alert-close:hover {
+    opacity: 1;
+}
+
 .sf-alert-warning {
     border-color: rgba(242, 189, 87, 0.45);
     background: rgba(109, 78, 21, 0.46);
     color: #ffe7be;
+}
+
+.alert {
+    color: #d9ecff;
+    background: rgba(20, 33, 49, 0.92);
+    border: 1px solid rgba(102, 192, 244, 0.26);
+}
+
+.alert .alert-link {
+    color: #bde6ff;
+}
+
+.alert-info {
+    color: #d8f3ff;
+    background: rgba(27, 75, 104, 0.48);
+    border-color: rgba(104, 205, 255, 0.38);
+}
+
+.alert-success {
+    color: #dcffdf;
+    background: rgba(42, 103, 62, 0.5);
+    border-color: rgba(125, 214, 125, 0.42);
+}
+
+.alert-warning {
+    color: #ffe6bc;
+    background: rgba(109, 77, 22, 0.55);
+    border-color: rgba(242, 189, 87, 0.5);
+}
+
+.alert-danger {
+    color: #ffd9e3;
+    background: rgba(122, 36, 58, 0.58);
+    border-color: rgba(255, 111, 143, 0.52);
+}
+
+.alert-dark {
+    color: #d9edff;
+    background: rgba(35, 51, 72, 0.72);
+    border-color: rgba(102, 192, 244, 0.28);
+}
+
+.sf-page-header {
+    margin-bottom: 0.85rem;
+    border: 1px solid rgba(102, 192, 244, 0.2);
+    border-radius: 14px;
+    padding: 0.9rem 1rem;
+    background: linear-gradient(140deg, rgba(17, 30, 45, 0.88), rgba(12, 22, 35, 0.86));
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.sf-page-title {
+    margin: 0;
+    font-family: "Rajdhani", sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-size: 1.7rem;
+}
+
+.sf-page-subtitle {
+    color: var(--sf-text-muted);
+    margin-top: 0.18rem;
+    font-size: 0.9rem;
 }
 
 .sf-card {
@@ -281,6 +368,16 @@ textarea.form-control {
     color: var(--sf-text);
 }
 
+.form-label {
+    color: #cde8ff;
+    font-size: 0.83rem;
+    margin-bottom: 0.35rem;
+}
+
+.form-text {
+    color: #8faecf;
+}
+
 .form-control:focus,
 .form-select:focus,
 .form-check-input:focus,
@@ -293,12 +390,20 @@ textarea.form-control:focus {
 
 .table {
     color: var(--sf-text);
+    --bs-table-color: var(--sf-text);
+    --bs-table-bg: transparent;
+    --bs-table-border-color: rgba(62, 89, 122, 0.6);
+    --bs-table-striped-color: var(--sf-text);
+    --bs-table-striped-bg: rgba(16, 29, 44, 0.55);
+    --bs-table-hover-color: var(--sf-text);
+    --bs-table-hover-bg: rgba(58, 91, 127, 0.18);
     border-color: rgba(62, 89, 122, 0.6);
 }
 
 .table > :not(caption) > * > * {
     background: transparent;
     border-bottom-color: rgba(62, 89, 122, 0.55);
+    color: var(--sf-text);
 }
 
 .table thead th {
@@ -307,10 +412,30 @@ textarea.form-control:focus {
     border-bottom-color: rgba(102, 192, 244, 0.28);
 }
 
+.table tbody th,
+.table tbody td {
+    color: var(--sf-text);
+}
+
+.table .fw-semibold {
+    color: #eaf4ff;
+}
+
+.table-hover > tbody > tr:hover > * {
+    background: rgba(58, 91, 127, 0.18);
+}
+
+.table th {
+    white-space: nowrap;
+}
+
 .sf-empty {
     color: var(--sf-text-muted);
     padding: 1rem;
     text-align: center;
+    border: 1px dashed rgba(102, 192, 244, 0.22);
+    border-radius: 12px;
+    background: rgba(9, 19, 30, 0.35);
 }
 
 .sf-kpi {
@@ -580,6 +705,33 @@ pre {
     color: var(--sf-text);
 }
 
+.sf-footer {
+    margin-top: 0.6rem;
+    border-top: 1px solid rgba(102, 192, 244, 0.18);
+    padding: 0.55rem 0.75rem 0.9rem;
+    color: var(--sf-text-muted);
+    font-size: 0.82rem;
+}
+
+.sf-auth-info-list {
+    margin: 0;
+    padding-left: 1rem;
+    color: #c8e3ff;
+    display: grid;
+    gap: 0.4rem;
+}
+
+.sf-denied-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.sf-table-note {
+    color: var(--sf-text-muted);
+    font-size: 0.8rem;
+}
+
 @media (max-width: 1199px) {
     .sf-col-3,
     .sf-col-4,
@@ -612,5 +764,9 @@ pre {
 
     .sf-topbar .container-fluid {
         align-items: flex-start !important;
+    }
+
+    .sf-page-title {
+        font-size: 1.4rem;
     }
 }

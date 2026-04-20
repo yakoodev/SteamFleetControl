@@ -17,11 +17,22 @@
         [JobType.FriendsConnectFamilyMain] = ("Друзья семьи", "Главный аккаунт + автопоиск family-целей.")
     };
     var totalAccounts = Model.AvailableAccounts.Count;
+    var selectedHint = typeHints.TryGetValue(Model.Type, out var currentHint)
+        ? currentHint
+        : (Model.Type.ToString(), "Без описания");
 }
+
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Конструктор задач</h1>
+        <div class="sf-page-subtitle">Выберите тип операции и заполните только нужные поля. JSON-режим не требуется.</div>
+    </div>
+    <a class="btn sf-btn sf-btn-secondary" asp-action="Index">К списку задач</a>
+</section>
 
 <section class="sf-card">
     <div class="sf-card-head">
-        <h1 class="sf-title">Конструктор задач</h1>
+        <h2 class="sf-title h4 mb-0">Новая batch-задача</h2>
         <div class="sf-subtitle">Типизированные формы для профиля, безопасности, друзей и family-сценариев без ручного JSON.</div>
     </div>
     <div class="sf-card-body">
@@ -36,7 +47,11 @@
                             ? mapped
                             : (type.ToString(), "Без описания");
                         var activeClass = Model.Type == type ? "is-active" : null;
-                        <button type="button" class="sf-job-type-card @activeClass" data-job-type="@type">
+                        <button type="button"
+                                class="sf-job-type-card @activeClass"
+                                data-job-type="@type"
+                                data-job-title="@hint.Item1"
+                                data-job-description="@hint.Item2">
                             <span class="sf-job-type-title">@hint.Item1</span>
                             <span class="sf-job-type-desc">@hint.Item2</span>
                         </button>
@@ -53,13 +68,10 @@
                     <div class="sf-grid">
                         <div class="sf-col-4">
                             <label class="form-label" asp-for="Type"></label>
-                            <select asp-for="Type" class="form-select" id="jobType">
-                                @foreach (var type in Enum.GetValues<JobType>())
-                                {
-                                    var selected = Model.Type == type ? "selected" : null;
-                                    <option value="@type" selected="@selected">@type</option>
-                                }
-                            </select>
+                            <input type="hidden" id="jobType" name="Type" value="@Model.Type" />
+                            <div id="selectedTypeLabel" class="form-control d-flex align-items-center">
+                                @selectedHint.Item1 (@Model.Type)
+                            </div>
                             <span asp-validation-for="Type" class="text-danger"></span>
                         </div>
                         <div class="sf-col-2">
@@ -85,6 +97,12 @@
                             <div class="form-check js-type js-password">
                                 <input class="form-check-input" asp-for="DeauthorizeAfterChange" />
                                 <label class="form-check-label" asp-for="DeauthorizeAfterChange"></label>
+                            </div>
+                        </div>
+                        <div class="sf-col-12">
+                            <div class="sf-advanced-box">
+                                <strong id="selectedTypeTitle">@selectedHint.Item1</strong>
+                                <div id="selectedTypeDescription" class="sf-subtitle mt-1">@selectedHint.Item2</div>
                             </div>
                         </div>
                     </div>
@@ -389,7 +407,10 @@
     <partial name="_ValidationScriptsPartial" />
     <script>
         (() => {
-            const typeSelect = document.getElementById("jobType");
+            const typeInput = document.getElementById("jobType");
+            const typeLabel = document.getElementById("selectedTypeLabel");
+            const typeTitle = document.getElementById("selectedTypeTitle");
+            const typeDescription = document.getElementById("selectedTypeDescription");
             const typeCards = Array.from(document.querySelectorAll(".sf-job-type-card"));
             const allBlocks = Array.from(document.querySelectorAll(".js-type"));
             const accountCheckboxes = () => Array.from(document.querySelectorAll(".account-checkbox"));
@@ -398,6 +419,9 @@
             const accountItems = Array.from(document.querySelectorAll(".sf-account-item"));
             const selectAllButton = document.getElementById("selectAllAccounts");
             const clearAllButton = document.getElementById("clearAllAccounts");
+            if (!typeInput || !typeCards.length) {
+                return;
+            }
 
             const groups = {
                 ProfileUpdate: [".js-profile", ".js-account-select"],
@@ -413,36 +437,43 @@
                 FriendsAddByInvite: [".js-friends-add"],
                 FriendsConnectFamilyMain: [".js-friends-family"]
             };
-            const enumOrder = [
-                "ProfileUpdate",
-                "PrivacyUpdate",
-                "AvatarUpdate",
-                "TagsAssign",
-                "GroupMove",
-                "SessionValidate",
-                "SessionRefresh",
-                "AddNote",
-                "PasswordChange",
-                "SessionsDeauthorize",
-                "FriendsAddByInvite",
-                "FriendsConnectFamilyMain"
-            ];
+            const defaultType = "SessionValidate";
 
-            function resolveTypeKey(rawValue) {
-                if (!rawValue) {
+            function normalizeType(rawValue) {
+                const raw = (rawValue || "").trim();
+                if (!raw) {
                     return "";
                 }
 
-                if (groups[rawValue]) {
-                    return rawValue;
+                const exact = Object.keys(groups).find(x => x === raw);
+                if (exact) {
+                    return exact;
                 }
 
-                if (/^\d+$/.test(rawValue)) {
-                    const idx = Number.parseInt(rawValue, 10);
-                    return enumOrder[idx] || rawValue;
-                }
+                const lowered = raw.toLowerCase();
+                const matched = Object.keys(groups).find(x => x.toLowerCase() === lowered);
+                return matched || "";
+            }
 
-                return rawValue;
+            function renderTypeMeta(type) {
+                const card = typeCards.find(x => x.dataset.jobType === type);
+                const title = card?.dataset.jobTitle || type;
+                const description = card?.dataset.jobDescription || "Описание типа задачи недоступно.";
+                if (typeLabel) {
+                    typeLabel.textContent = `${title} (${type})`;
+                }
+                if (typeTitle) {
+                    typeTitle.textContent = title;
+                }
+                if (typeDescription) {
+                    typeDescription.textContent = description;
+                }
+            }
+
+            function setType(nextType) {
+                const normalized = normalizeType(nextType) || defaultType;
+                typeInput.value = normalized;
+                updateTypeVisibility();
             }
 
             function updateSelectedCount() {
@@ -455,12 +486,13 @@
             }
 
             function updateTypeVisibility() {
-                const type = resolveTypeKey(typeSelect.value);
+                const type = normalizeType(typeInput.value) || defaultType;
+                typeInput.value = type;
                 allBlocks.forEach(el => {
                     el.style.display = "none";
                 });
 
-                (groups[type] || []).forEach(selector => {
+                (groups[type] || [".js-account-select"]).forEach(selector => {
                     document.querySelectorAll(selector).forEach(el => {
                         el.style.display = "";
                     });
@@ -469,6 +501,7 @@
                 typeCards.forEach(card => {
                     card.classList.toggle("is-active", card.dataset.jobType === type);
                 });
+                renderTypeMeta(type);
             }
 
             typeCards.forEach(card => {
@@ -477,20 +510,7 @@
                     if (!nextType) {
                         return;
                     }
-
-                    if (typeSelect.value !== nextType) {
-                        const matchingByValue = Array.from(typeSelect.options).find(x => x.value === nextType);
-                        if (matchingByValue) {
-                            typeSelect.value = nextType;
-                        } else {
-                            const index = enumOrder.indexOf(nextType);
-                            if (index >= 0) {
-                                typeSelect.value = String(index);
-                            }
-                        }
-                    }
-
-                    typeSelect.dispatchEvent(new Event("change"));
+                    setType(nextType);
                 });
             });
 
@@ -591,9 +611,8 @@
                 bindPairButtons();
             });
 
-            typeSelect.addEventListener("change", updateTypeVisibility);
             bindPairButtons();
-            updateTypeVisibility();
+            setType(typeInput.value);
             updateSelectedCount();
         })();
     </script>

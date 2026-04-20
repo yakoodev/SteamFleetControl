@@ -12,6 +12,7 @@ public sealed partial class SteamKitGateway
     public async Task<SteamQrAuthStartResult> StartQrAuthenticationAsync(CancellationToken cancellationToken = default)
     {
         CleanupExpiredQrFlows();
+        CancelActiveQrFlows("QR flow was replaced by a newer attempt.");
 
         var steamClient = new SteamClient();
         var manager = new CallbackManager(steamClient);
@@ -186,6 +187,16 @@ public sealed partial class SteamKitGateway
             }
 
             flow.MarkExpired("QR flow expired.");
+            _qrFlows.TryRemove(flowId, out _);
+            _ = flow.StopRuntimeAsync();
+        }
+    }
+
+    private void CancelActiveQrFlows(string reason)
+    {
+        foreach (var (flowId, flow) in _qrFlows.ToArray())
+        {
+            flow.MarkCanceled(reason);
             _qrFlows.TryRemove(flowId, out _);
             _ = flow.StopRuntimeAsync();
         }

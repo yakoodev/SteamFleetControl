@@ -4,15 +4,25 @@
     var id = (Guid)ViewData["AccountId"]!;
 }
 
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Редактирование аккаунта</h1>
+        <div class="sf-page-subtitle">Обновление карточки, тегов, статуса и служебных полей.</div>
+    </div>
+    <a class="btn sf-btn sf-btn-secondary" asp-action="Details" asp-route-id="@id">Назад в карточку</a>
+</section>
+
 <section class="sf-card">
     <div class="sf-card-head">
-        <h1 class="sf-title">Редактирование аккаунта</h1>
+        <h2 class="sf-title h5 mb-0">Поля аккаунта</h2>
     </div>
     <div class="sf-card-body">
         <form asp-action="EditPost" asp-route-id="@id" method="post" class="sf-grid">
+            <div asp-validation-summary="ModelOnly" class="text-danger sf-col-12"></div>
             <div class="sf-col-4">
                 <label asp-for="LoginName" class="form-label">Login</label>
                 <input asp-for="LoginName" class="form-control" readonly />
+                <div class="form-text">Логин фиксируется при создании и не редактируется.</div>
             </div>
             <div class="sf-col-4">
                 <label asp-for="DisplayName" class="form-label">Display Name</label>
@@ -37,6 +47,7 @@
             <div class="sf-col-6">
                 <label asp-for="SessionPayload" class="form-label">Session payload (новое значение)</label>
                 <textarea asp-for="SessionPayload" rows="3" class="form-control"></textarea>
+                <div class="form-text">Изменяйте только если уверены, что payload актуален.</div>
             </div>
             <div class="sf-col-6">
                 <label asp-for="Note" class="form-label">Примечание</label>
@@ -49,3 +60,8 @@
         </form>
     </div>
 </section>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}

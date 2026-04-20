@@ -430,6 +430,7 @@ public sealed partial class AccountService
         {
             Success = true,
             NewPassword = nextPassword,
+            WasGenerated = generated,
             Deauthorized = deauthorized,
             ErrorMessage = deauthorizeWarning,
             ReasonCode = deauthorizeReasonCode,

@@ -10,6 +10,15 @@
 </head>
 <body>
 @{
+    var currentController = ViewContext.RouteData.Values["controller"]?.ToString() ?? string.Empty;
+    var currentAction = ViewContext.RouteData.Values["action"]?.ToString() ?? string.Empty;
+    string NavClass(string controller, string? action = null)
+    {
+        var controllerMatch = string.Equals(currentController, controller, StringComparison.OrdinalIgnoreCase);
+        var actionMatch = action is null || string.Equals(currentAction, action, StringComparison.OrdinalIgnoreCase);
+        return controllerMatch && actionMatch ? "sf-nav-link is-active" : "sf-nav-link";
+    }
+
     var canUseAdminTools = User.Identity?.IsAuthenticated == true &&
                            (User.IsInRole(Roles.SuperAdmin) || User.IsInRole(Roles.Admin));
 }
@@ -21,19 +30,19 @@
             <span class="sf-brand-text">SteamFleet Control</span>
         </a>
         <nav class="sf-nav d-flex align-items-center gap-2 flex-wrap">
-            <a class="sf-nav-link" asp-controller="Accounts" asp-action="Index">Аккаунты</a>
-            <a class="sf-nav-link" asp-controller="Jobs" asp-action="Index">Задачи</a>
-            <a class="sf-nav-link" asp-controller="Audit" asp-action="Index">Аудит</a>
+            <a class="@NavClass("Accounts", "Index")" asp-controller="Accounts" asp-action="Index">Аккаунты</a>
+            <a class="@NavClass("Jobs", "Index")" asp-controller="Jobs" asp-action="Index">Задачи</a>
+            <a class="@NavClass("Audit", "Index")" asp-controller="Audit" asp-action="Index">Аудит</a>
             @if (canUseAdminTools)
             {
-                <a class="sf-nav-link" href="/swagger">Swagger</a>
-                <a class="sf-nav-link" href="/hangfire">Hangfire</a>
+                <a class="sf-nav-link" href="/swagger" target="_blank" rel="noopener">Swagger</a>
+                <a class="sf-nav-link" href="/hangfire" target="_blank" rel="noopener">Hangfire</a>
             }
         </nav>
         <div class="d-flex align-items-center gap-2">
             @if (User.Identity?.IsAuthenticated == true)
             {
-                <span class="sf-user">@User.Identity.Name</span>
+                <span class="sf-user" title="Текущий пользователь">@User.Identity.Name</span>
                 <form asp-controller="Auth" asp-action="Logout" method="post" class="d-inline">
                     <button type="submit" class="btn sf-btn sf-btn-danger btn-sm">Выйти</button>
                 </form>
@@ -49,15 +58,30 @@
 <main class="container-fluid sf-main">
     @if (TempData["Success"] is string success)
     {
-        <div class="sf-alert sf-alert-success">@success</div>
+        <div class="sf-alert sf-alert-success d-flex justify-content-between align-items-start gap-3">
+            <div>@success</div>
+            <button type="button" class="btn-close btn-close-white sf-alert-close" aria-label="Закрыть" onclick="this.closest('.sf-alert')?.remove();"></button>
+        </div>
     }
     @if (TempData["Error"] is string error)
     {
-        <div class="sf-alert sf-alert-danger">@error</div>
+        <div class="sf-alert sf-alert-danger d-flex justify-content-between align-items-start gap-3">
+            <div>@error</div>
+            <button type="button" class="btn-close btn-close-white sf-alert-close" aria-label="Закрыть" onclick="this.closest('.sf-alert')?.remove();"></button>
+        </div>
     }
 
-    @RenderBody()
+    <div class="sf-shell">
+        @RenderBody()
+    </div>
 </main>
+
+<footer class="sf-footer">
+    <div class="container-fluid d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>SteamFleet Control</span>
+        <span class="sf-subtitle">Локальная панель управления аккаунтами, задачами и аудитом</span>
+    </div>
+</footer>
 
 <script src="~/lib/jquery/dist/jquery.min.js"></script>
 <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>

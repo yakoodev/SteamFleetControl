@@ -3,31 +3,44 @@
     ViewData["Title"] = "Аккаунты";
     var filter = ViewData["Filter"] as AccountFilterRequest ?? new AccountFilterRequest();
     var familyMainOptions = ViewData["FamilyMainOptions"] as List<AccountDto> ?? [];
+
+    string RiskBadgeClass(AccountRiskLevel level) => level switch
+    {
+        AccountRiskLevel.Cooldown => "sf-badge-danger",
+        AccountRiskLevel.Elevated => "sf-badge-family",
+        _ => "sf-badge-owned"
+    };
 }
 
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Каталог аккаунтов</h1>
+        <div class="sf-page-subtitle">Поиск, фильтрация, импорт и быстрые действия по Steam-аккаунтам.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <a class="btn sf-btn sf-btn-primary" asp-action="Create">Добавить аккаунт</a>
+        <a class="btn sf-btn sf-btn-secondary"
+           asp-action="Export"
+           asp-route-query="@filter.Query"
+           asp-route-status="@filter.Status"
+           asp-route-tag="@filter.Tag"
+           asp-route-familyGroup="@filter.FamilyGroup">Экспорт CSV</a>
+    </div>
+</section>
+
 <section class="sf-card mb-3">
-    <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div>
-            <h1 class="sf-title">Каталог Steam-аккаунтов</h1>
-            <div class="sf-subtitle">Управление профилями, семейными группами, сессиями и безопасностью</div>
-        </div>
-        <div class="d-flex gap-2">
-            <a class="btn sf-btn sf-btn-primary" asp-action="Create">Добавить аккаунт</a>
-            <a class="btn sf-btn sf-btn-secondary"
-               asp-action="Export"
-               asp-route-query="@filter.Query"
-               asp-route-status="@filter.Status"
-               asp-route-tag="@filter.Tag"
-               asp-route-familyGroup="@filter.FamilyGroup">Экспорт CSV</a>
-        </div>
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Фильтры</h2>
     </div>
     <div class="sf-card-body">
-        <form method="get" class="row g-2">
+        <form method="get" class="row g-2 mb-3">
             <div class="col-xl-3 col-md-6">
-                <input class="form-control" name="Query" value="@filter.Query" placeholder="Поиск по login/email/SteamId" />
+                <label class="form-label" for="query">Поиск</label>
+                <input id="query" class="form-control" name="Query" value="@filter.Query" placeholder="login, email, SteamId" />
             </div>
             <div class="col-xl-2 col-md-6">
-                <select class="form-select" name="Status">
+                <label class="form-label" for="status">Статус</label>
+                <select id="status" class="form-select" name="Status">
                     <option value="">Все статусы</option>
                     @foreach (var status in Enum.GetValues<AccountStatus>())
                     {
@@ -36,11 +49,13 @@
                 </select>
             </div>
             <div class="col-xl-2 col-md-6">
-                <input class="form-control" name="Tag" value="@filter.Tag" placeholder="Тег" />
+                <label class="form-label" for="tag">Тег</label>
+                <input id="tag" class="form-control" name="Tag" value="@filter.Tag" placeholder="например: farm" />
             </div>
             <div class="col-xl-3 col-md-6">
-                <select class="form-select" name="FamilyGroup">
-                    <option value="" selected="@string.IsNullOrWhiteSpace(filter.FamilyGroup)">Все семейные группы</option>
+                <label class="form-label" for="familyGroup">Семейная группа</label>
+                <select id="familyGroup" class="form-select" name="FamilyGroup">
+                    <option value="" selected="@string.IsNullOrWhiteSpace(filter.FamilyGroup)">Все</option>
                     <option value="ungrouped" selected="@(string.Equals(filter.FamilyGroup, "ungrouped", StringComparison.OrdinalIgnoreCase))">Без группы</option>
                     <option value="with" selected="@(string.Equals(filter.FamilyGroup, "with", StringComparison.OrdinalIgnoreCase) || string.Equals(filter.FamilyGroup, "family", StringComparison.OrdinalIgnoreCase))">В семейной группе</option>
                     @foreach (var main in familyMainOptions)
@@ -51,14 +66,21 @@
                     }
                 </select>
             </div>
-            <div class="col-xl-2 col-md-6">
+            <div class="col-xl-2 col-md-6 d-flex align-items-end gap-2">
                 <button class="btn sf-btn sf-btn-primary w-100" type="submit">Применить</button>
+                <a class="btn sf-btn sf-btn-secondary" asp-action="Index">Сброс</a>
             </div>
-            <div class="col-xl-2 col-md-12"></div>
         </form>
-        <form asp-action="Import" method="post" enctype="multipart/form-data" class="d-flex gap-2 mt-2">
-            <input class="form-control" type="file" name="file" accept=".csv,.json" required />
-            <button class="btn sf-btn sf-btn-secondary" type="submit">Импорт</button>
+
+        <form asp-action="Import" method="post" enctype="multipart/form-data" class="row g-2 align-items-end">
+            <div class="col-xl-6 col-md-8">
+                <label class="form-label" for="importFile">Импорт аккаунтов</label>
+                <input id="importFile" class="form-control" type="file" name="file" accept=".csv,.json" required />
+                <div class="form-text">Поддерживаются CSV и JSON. Рекомендуемый batch: до 100 записей за один импорт.</div>
+            </div>
+            <div class="col-xl-2 col-md-4">
+                <button class="btn sf-btn sf-btn-secondary w-100" type="submit">Импорт</button>
+            </div>
         </form>
     </div>
 </section>
@@ -71,7 +93,7 @@
     <div class="sf-card-body">
         @if (Model.Items.Count == 0)
         {
-            <div class="sf-empty">Совпадений не найдено.</div>
+            <div class="sf-empty">По заданным фильтрам аккаунты не найдены.</div>
         }
         else
         {
@@ -86,7 +108,7 @@
                         <th>Статус</th>
                         <th>Риск</th>
                         <th>Синхронизация</th>
-                        <th></th>
+                        <th>Действия</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -97,19 +119,23 @@
                                 <div class="fw-semibold">@account.LoginName</div>
                                 <div class="sf-subtitle">@account.DisplayName</div>
                                 <div class="sf-subtitle">@account.Email</div>
+                                @if (!string.IsNullOrWhiteSpace(account.SteamId64))
+                                {
+                                    <div class="sf-subtitle">SteamId: @account.SteamId64</div>
+                                }
                             </td>
                             <td>
                                 @if (!string.IsNullOrWhiteSpace(account.ProfileUrl))
                                 {
-                                    <a href="@account.ProfileUrl" target="_blank">Открыть профиль</a>
+                                    <a href="@account.ProfileUrl" target="_blank" rel="noopener">Открыть профиль</a>
                                 }
                                 else if (!string.IsNullOrWhiteSpace(account.SteamId64))
                                 {
-                                    <a href="https://steamcommunity.com/profiles/@account.SteamId64" target="_blank">Профиль по SteamId</a>
+                                    <a href="https://steamcommunity.com/profiles/@account.SteamId64" target="_blank" rel="noopener">Профиль по SteamId</a>
                                 }
                                 else
                                 {
-                                    <span class="sf-subtitle">нет ссылки</span>
+                                    <span class="sf-subtitle">ссылка отсутствует</span>
                                 }
                             </td>
                             <td>
@@ -117,39 +143,36 @@
                                 {
                                     <span class="sf-badge sf-badge-muted">External</span>
                                 }
-                                @if (!string.IsNullOrWhiteSpace(account.SteamFamilyId) && !account.IsExternal)
+                                else if (!string.IsNullOrWhiteSpace(account.SteamFamilyId))
                                 {
                                     <span class="sf-badge sf-badge-family">Family</span>
                                 }
+                                else
+                                {
+                                    <span class="sf-badge sf-badge-muted">Без семьи</span>
+                                }
+
                                 @if (account.IsFamilyOrganizer)
                                 {
-                                    <span class="sf-badge sf-badge-owned">Organizer</span>
+                                    <span class="sf-badge sf-badge-owned ms-1">Organizer</span>
                                 }
                                 <div class="sf-subtitle mt-1">FamilyId: @(account.SteamFamilyId ?? "—")</div>
-                                <div class="sf-subtitle mt-1">Семья: @account.FamilyAccountsCount</div>
                                 <div class="sf-subtitle">Role: @(account.SteamFamilyRole ?? "—")</div>
                             </td>
                             <td>
-                                <div>@account.GamesCount</div>
-                                <div class="sf-subtitle">@account.GamesLastSyncAt?.ToString("g")</div>
+                                <div class="fw-semibold">@account.GamesCount</div>
+                                <div class="sf-subtitle">sync: @account.GamesLastSyncAt?.ToString("g")</div>
                             </td>
                             <td><span class="sf-badge sf-badge-muted">@account.Status</span></td>
                             <td>
-                                <span class="sf-badge @(account.RiskLevel switch
-                                                        {
-                                                            AccountRiskLevel.Cooldown => "sf-badge-danger",
-                                                            AccountRiskLevel.Elevated => "sf-badge-family",
-                                                            _ => "sf-badge-owned"
-                                                        })">
-                                    @account.RiskLevel
-                                </span>
+                                <span class="sf-badge @RiskBadgeClass(account.RiskLevel)">@account.RiskLevel</span>
                                 @if (!string.IsNullOrWhiteSpace(account.LastRiskReasonCode))
                                 {
                                     <div class="sf-subtitle mt-1">@account.LastRiskReasonCode</div>
                                 }
                                 @if (account.AutoRetryAfter is not null)
                                 {
-                                    <div class="sf-subtitle">retry: @account.AutoRetryAfter?.ToString("g")</div>
+                                    <div class="sf-subtitle">auto retry: @account.AutoRetryAfter?.ToString("g")</div>
                                 }
                             </td>
                             <td>
@@ -158,10 +181,10 @@
                             </td>
                             <td>
                                 <div class="d-flex gap-1 flex-wrap">
-                                    <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Details" asp-route-id="@account.Id">Открыть</a>
+                                    <a class="btn sf-btn sf-btn-primary btn-sm" asp-action="Details" asp-route-id="@account.Id">Открыть</a>
                                     <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Edit" asp-route-id="@account.Id">Редактировать</a>
                                     <form asp-action="ValidateSession" asp-route-id="@account.Id" method="post">
-                                        <button class="btn sf-btn sf-btn-primary btn-sm" type="submit">Validate</button>
+                                        <button class="btn sf-btn sf-btn-secondary btn-sm" type="submit">Проверить сессию</button>
                                     </form>
                                 </div>
                             </td>
