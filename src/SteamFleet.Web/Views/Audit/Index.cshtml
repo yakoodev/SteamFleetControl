@@ -1,30 +1,152 @@
 @model IReadOnlyCollection<AuditEventDto>
 @{
     ViewData["Title"] = "Аудит";
+    var events = Model.OrderByDescending(x => x.CreatedAt).ToList();
+    var eventTypes = events
+        .Select(x => x.EventType.ToString())
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 }
-<h1 class="h4">Журнал аудита</h1>
-<table class="table table-sm table-striped">
-    <thead>
-    <tr>
-        <th>Время</th>
-        <th>Тип</th>
-        <th>Entity</th>
-        <th>Actor</th>
-        <th>IP</th>
-        <th>Payload</th>
-    </tr>
-    </thead>
-    <tbody>
-    @foreach (var item in Model)
-    {
-        <tr>
-            <td>@item.CreatedAt.ToString("g")</td>
-            <td>@item.EventType</td>
-            <td>@item.EntityType:@item.EntityId</td>
-            <td>@item.ActorId</td>
-            <td>@item.Ip</td>
-            <td><pre class="mb-0">@System.Text.Json.JsonSerializer.Serialize(item.Payload)</pre></td>
-        </tr>
-    }
-    </tbody>
-</table>
+
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Журнал аудита</h1>
+        <div class="sf-page-subtitle">Трассировка входов, изменений аккаунтов, задач и системных событий.</div>
+    </div>
+    <span class="sf-badge sf-badge-muted">Записей: @events.Count</span>
+</section>
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Быстрый фильтр</h2>
+    </div>
+    <div class="sf-card-body">
+        <div class="row g-2">
+            <div class="col-xl-5 col-md-6">
+                <label class="form-label" for="auditSearchInput">Поиск</label>
+                <input id="auditSearchInput" class="form-control" placeholder="eventType, entity, actor, ip, payload..." />
+            </div>
+            <div class="col-xl-3 col-md-6">
+                <label class="form-label" for="auditTypeFilter">Тип события</label>
+                <select id="auditTypeFilter" class="form-select">
+                    <option value="">Все типы</option>
+                    @foreach (var type in eventTypes)
+                    {
+                        <option value="@type">@type</option>
+                    }
+                </select>
+            </div>
+            <div class="col-xl-2 col-md-4">
+                <label class="form-label" for="auditOnlyErrors">Только ошибки</label>
+                <div class="form-check mt-1">
+                    <input id="auditOnlyErrors" class="form-check-input" type="checkbox" />
+                    <label class="form-check-label" for="auditOnlyErrors">Да</label>
+                </div>
+            </div>
+            <div class="col-xl-2 col-md-8 d-flex align-items-end justify-content-end">
+                <span class="sf-table-note">Видимо строк: <span id="auditVisibleCount">@events.Count</span></span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="sf-card">
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">События</h2>
+    </div>
+    <div class="sf-card-body">
+        @if (events.Count == 0)
+        {
+            <div class="sf-empty">Записи аудита пока отсутствуют.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle">
+                    <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Тип</th>
+                        <th>Сущность</th>
+                        <th>Actor</th>
+                        <th>IP</th>
+                        <th>Payload</th>
+                    </tr>
+                    </thead>
+                    <tbody id="auditTableBody">
+                    @foreach (var item in events)
+                    {
+                        var eventType = item.EventType.ToString();
+                        var payloadJson = System.Text.Json.JsonSerializer.Serialize(item.Payload);
+                        var rowText = $"{eventType} {item.EntityType} {item.EntityId} {item.ActorId} {item.Ip} {payloadJson}".ToLowerInvariant();
+                        var isError = eventType.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                                      eventType.Contains("failed", StringComparison.OrdinalIgnoreCase);
+                        <tr data-type="@eventType"
+                            data-search="@rowText"
+                            data-error="@(isError ? "1" : "0")">
+                            <td>@item.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td><span class="sf-badge sf-badge-muted">@eventType</span></td>
+                            <td>@item.EntityType:@item.EntityId</td>
+                            <td>@(item.ActorId ?? "system")</td>
+                            <td>@(item.Ip ?? "—")</td>
+                            <td>
+                                <details class="sf-advanced-box">
+                                    <summary>Показать payload</summary>
+                                    <pre class="sf-code-box">@System.Text.Json.JsonSerializer.Serialize(item.Payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })</pre>
+                                </details>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</section>
+
+@section Scripts
+{
+    <script>
+        (() => {
+            const searchInput = document.getElementById("auditSearchInput");
+            const typeFilter = document.getElementById("auditTypeFilter");
+            const onlyErrors = document.getElementById("auditOnlyErrors");
+            const rows = Array.from(document.querySelectorAll("#auditTableBody tr"));
+            const visibleCount = document.getElementById("auditVisibleCount");
+
+            if (!rows.length || !searchInput || !typeFilter || !onlyErrors || !visibleCount) {
+                return;
+            }
+
+            function applyFilters() {
+                const query = searchInput.value.trim().toLowerCase();
+                const selectedType = typeFilter.value;
+                const errorsOnly = onlyErrors.checked;
+                let count = 0;
+
+                rows.forEach(row => {
+                    const rowType = row.dataset.type || "";
+                    const haystack = row.dataset.search || "";
+                    const isError = row.dataset.error === "1";
+                    const typeMatch = !selectedType || rowType === selectedType;
+                    const queryMatch = !query || haystack.includes(query);
+                    const errorMatch = !errorsOnly || isError;
+                    const show = typeMatch && queryMatch && errorMatch;
+                    row.style.display = show ? "" : "none";
+                    if (show) {
+                        count += 1;
+                    }
+                });
+
+                visibleCount.textContent = String(count);
+            }
+
+            searchInput.addEventListener("input", applyFilters);
+            typeFilter.addEventListener("change", applyFilters);
+            onlyErrors.addEventListener("change", applyFilters);
+            applyFilters();
+        })();
+    </script>
+}

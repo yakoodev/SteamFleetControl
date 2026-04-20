@@ -45,22 +45,27 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
             entity.Property(x => x.PhoneMasked).HasMaxLength(64);
             entity.Property(x => x.Note).HasMaxLength(4000);
             entity.Property(x => x.Proxy).HasMaxLength(512);
+            entity.Property(x => x.ExternalSource).HasMaxLength(128);
+            entity.Property(x => x.SteamFamilyId).HasMaxLength(64);
+            entity.Property(x => x.SteamFamilyRole).HasMaxLength(64);
+            entity.Property(x => x.LastRiskReasonCode).HasMaxLength(64);
             entity.Property(x => x.MetadataJson).HasColumnType("jsonb").HasDefaultValue("{}");
             entity.Property(x => x.CreatedBy).HasMaxLength(255);
             entity.Property(x => x.UpdatedBy).HasMaxLength(255);
             entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(64);
+            entity.Property(x => x.RiskLevel).HasConversion<string>().HasMaxLength(32);
             entity.HasOne(x => x.Folder)
                 .WithMany(x => x.Accounts)
                 .HasForeignKey(x => x.FolderId)
                 .OnDelete(DeleteBehavior.SetNull);
-            entity.HasOne(x => x.ParentAccount)
-                .WithMany(x => x.ChildAccounts)
-                .HasForeignKey(x => x.ParentAccountId)
-                .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => x.LoginName).IsUnique();
             entity.HasIndex(x => x.Status);
             entity.HasIndex(x => x.LastCheckAt);
-            entity.HasIndex(x => x.ParentAccountId);
+            entity.HasIndex(x => x.SteamFamilyId);
+            entity.HasIndex(x => x.IsExternal);
+            entity.HasIndex(x => x.SteamId64);
+            entity.HasIndex(x => x.RiskLevel);
+            entity.HasIndex(x => x.AutoRetryAfter);
         });
 
         builder.Entity<SteamAccountSecret>(entity =>

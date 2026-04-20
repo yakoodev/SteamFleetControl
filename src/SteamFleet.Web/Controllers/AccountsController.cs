@@ -18,13 +18,14 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
         var page = await accountService.GetAsync(request, cancellationToken);
         var mainAccounts = await accountService.GetAsync(new AccountFilterRequest
         {
-            FamilyGroup = "main",
+            FamilyGroup = "with",
             Page = 1,
             PageSize = 5000
         }, cancellationToken);
 
         ViewData["Filter"] = request;
         ViewData["FamilyMainOptions"] = mainAccounts.Items
+            .Where(x => x.IsFamilyOrganizer && !x.IsExternal)
             .OrderBy(x => x.LoginName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -77,22 +78,18 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
         };
 
         var games = await accountService.GetGamesAsync(id, parsedScope, q, page, pageSize, cancellationToken);
-        var allAccounts = await accountService.GetAsync(new AccountFilterRequest
-        {
-            Page = 1,
-            PageSize = 5000
-        }, cancellationToken);
+        var allAccounts = await accountService.GetAsync(new AccountFilterRequest { Page = 1, PageSize = 5000 }, cancellationToken);
 
-        ViewData["ParentCandidates"] = allAccounts.Items
-            .Where(x => x.Id != id && x.ParentAccountId is null)
-            .OrderBy(x => x.LoginName)
-            .ToList();
-        ViewData["ChildAccounts"] = allAccounts.Items
-            .Where(x => x.ParentAccountId == id)
-            .OrderBy(x => x.LoginName)
-            .ToList();
         ViewData["FriendSourceCandidates"] = allAccounts.Items
-            .Where(x => x.Id != id)
+            .Where(x => x.Id != id && !x.IsExternal)
+            .OrderBy(x => x.LoginName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        ViewData["FamilyInviteTargets"] = allAccounts.Items
+            .Where(x => x.Id != id && !x.IsExternal && !string.IsNullOrWhiteSpace(x.SteamId64))
+            .OrderBy(x => x.LoginName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        ViewData["FamilyInviteSources"] = allAccounts.Items
+            .Where(x => x.Id != id && !x.IsExternal && x.IsFamilyOrganizer && !string.IsNullOrWhiteSpace(x.SteamId64))
             .OrderBy(x => x.LoginName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         ViewData["GamesScope"] = scope?.ToLowerInvariant() switch
@@ -105,6 +102,7 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
         ViewData["GamesPage"] = page;
         ViewData["GamesPageSize"] = pageSize;
         ViewData["Games"] = games;
+        ViewData["FamilySnapshot"] = await accountService.GetFamilySnapshotAsync(id, cancellationToken);
         ViewData["FriendInviteLink"] = await accountService.GetFriendInviteLinkAsync(id, cancellationToken);
         ViewData["FriendsSnapshot"] = await accountService.GetFriendsAsync(id, cancellationToken);
         account.Metadata.TryGetValue("password.change.pending.requestId", out var pendingPasswordRequestId);
@@ -237,8 +235,14 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
                 return RedirectToAction(nameof(Details), new { id });
             }
 
-            var successMessage = result.NewPassword is not null
-                ? $"Пароль изменен. Новый пароль: {result.NewPassword}"
+            if (result.WasGenerated && !string.IsNullOrWhiteSpace(result.NewPassword))
+            {
+                TempData["PasswordGeneratedModal"] = "1";
+                TempData["PasswordGeneratedValue"] = result.NewPassword;
+            }
+
+            var successMessage = result.WasGenerated
+                ? "Пароль изменен. Сгенерированный пароль показан в модальном окне (показывается один раз)."
                 : "Пароль изменен.";
 
             if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
@@ -379,25 +383,82 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
-    [HttpPost("{id:guid}/family/assign-parent")]
-    public async Task<IActionResult> AssignParent(Guid id, [FromForm] FamilyAssignParentRequest request, CancellationToken cancellationToken)
+    [HttpPost("{id:guid}/family/sync")]
+    public async Task<IActionResult> SyncFamily(Guid id, CancellationToken cancellationToken)
     {
         try
         {
-            var updated = await accountService.AssignParentAsync(id, request.ParentAccountId, ActorId, ClientIp, cancellationToken);
-            if (updated is null)
-            {
-                return NotFound();
-            }
-
-            TempData["Success"] = "Главный аккаунт назначен.";
+            var snapshot = await accountService.SyncFamilyFromSteamAsync(id, ActorId, ClientIp, cancellationToken);
+            TempData["Success"] = $"Steam Family синхронизирована. Участников: {snapshot.Members.Count}.";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось синхронизировать семью: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
         }
         catch (InvalidOperationException ex)
         {
-            TempData["Error"] = ex.Message;
+            TempData["Error"] = $"Не удалось синхронизировать семью: {ex.Message}";
         }
 
-        return RedirectToAction(nameof(Details), new { id });
+        return RedirectToAction(nameof(Details), new { id, tab = "family" });
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/invite")]
+    public async Task<IActionResult> InviteToFamily(Guid id, [FromForm] FamilyInviteRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.InviteToFamilyAsync(id, request, ActorId, ClientIp, cancellationToken);
+            TempData[result.Success ? "Success" : "Error"] = result.Success
+                ? "Семейное приглашение отправлено."
+                : $"Не удалось отправить семейное приглашение: {result.ErrorMessage}";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось отправить семейное приглашение: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось отправить семейное приглашение: {ex.Message}";
+        }
+
+        return RedirectToAction(nameof(Details), new { id, tab = "family" });
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/accept-invite")]
+    public async Task<IActionResult> AcceptFamilyInvite(Guid id, [FromForm] FamilyAcceptInviteRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.AcceptFamilyInviteAsync(id, request, ActorId, ClientIp, cancellationToken);
+            TempData[result.Success ? "Success" : "Error"] = result.Success
+                ? "Семейное приглашение принято."
+                : $"Не удалось принять семейное приглашение: {result.ErrorMessage}";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось принять семейное приглашение: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось принять семейное приглашение: {ex.Message}";
+        }
+
+        return RedirectToAction(nameof(Details), new { id, tab = "family" });
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/assign-parent")]
+    public async Task<IActionResult> AssignParent(Guid id, [FromForm] FamilyAssignParentRequest request, CancellationToken cancellationToken)
+    {
+        await Task.CompletedTask;
+        TempData["Error"] = "Ручное управление семейными связями отключено. Используйте синхронизацию Steam Family.";
+        return RedirectToAction(nameof(Details), new { id, tab = "family" });
     }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
@@ -405,14 +466,9 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/family/remove-parent")]
     public async Task<IActionResult> RemoveParent(Guid id, CancellationToken cancellationToken)
     {
-        var updated = await accountService.RemoveParentAsync(id, ActorId, ClientIp, cancellationToken);
-        if (updated is null)
-        {
-            return NotFound();
-        }
-
-        TempData["Success"] = "Семейная связь удалена.";
-        return RedirectToAction(nameof(Details), new { id });
+        await Task.CompletedTask;
+        TempData["Error"] = "Ручное управление семейными связями отключено. Используйте синхронизацию Steam Family.";
+        return RedirectToAction(nameof(Details), new { id, tab = "family" });
     }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]

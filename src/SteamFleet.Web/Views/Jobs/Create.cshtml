@@ -1,203 +1,402 @@
 @model CreateJobFormModel
 @{
     ViewData["Title"] = "Создать задачу";
+    var typeHints = new Dictionary<JobType, (string Title, string Description)>
+    {
+        [JobType.ProfileUpdate] = ("Профиль", "Имя, био, real name, локация, custom URL."),
+        [JobType.PrivacyUpdate] = ("Приватность", "Профиль, друзья и инвентарь."),
+        [JobType.AvatarUpdate] = ("Аватар", "Файл/URL/base64 с валидацией размера."),
+        [JobType.TagsAssign] = ("Теги", "Массовое назначение тегов."),
+        [JobType.GroupMove] = ("Папка", "Перемещение в папку."),
+        [JobType.AddNote] = ("Заметка", "Добавление рабочей заметки."),
+        [JobType.PasswordChange] = ("Смена пароля", "Единый или сгенерированный пароль + deauth."),
+        [JobType.SessionsDeauthorize] = ("Деавторизация", "Завершить все сессии."),
+        [JobType.SessionValidate] = ("Проверка сессии", "Проверка валидности текущей сессии."),
+        [JobType.SessionRefresh] = ("Обновление сессии", "Refresh/re-auth по необходимости."),
+        [JobType.FriendsAddByInvite] = ("Друзья по invite", "Пары source -> target по invite-link."),
+        [JobType.FriendsConnectFamilyMain] = ("Друзья семьи", "Главный аккаунт + автопоиск family-целей.")
+    };
+    var totalAccounts = Model.AvailableAccounts.Count;
+    var selectedHint = typeHints.TryGetValue(Model.Type, out var currentHint)
+        ? currentHint
+        : (Model.Type.ToString(), "Без описания");
 }
+
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Конструктор задач</h1>
+        <div class="sf-page-subtitle">Выберите тип операции и заполните только нужные поля. JSON-режим не требуется.</div>
+    </div>
+    <a class="btn sf-btn sf-btn-secondary" asp-action="Index">К списку задач</a>
+</section>
 
 <section class="sf-card">
     <div class="sf-card-head">
-        <h1 class="sf-title">Конструктор batch-задачи</h1>
-        <div class="sf-subtitle">Типизированные формы для всех типов задач без JSON payload.</div>
+        <h2 class="sf-title h4 mb-0">Новая batch-задача</h2>
+        <div class="sf-subtitle">Типизированные формы для профиля, безопасности, друзей и family-сценариев без ручного JSON.</div>
     </div>
     <div class="sf-card-body">
-        <form asp-action="CreatePost" method="post" class="sf-grid" id="jobForm">
+        <form asp-action="CreatePost" method="post" enctype="multipart/form-data" class="sf-grid" id="jobForm">
             <div asp-validation-summary="ModelOnly" class="text-danger sf-col-12"></div>
 
-            <div class="sf-col-3">
-                <label class="form-label" asp-for="Type">Тип задачи</label>
-                <select asp-for="Type" asp-items="Html.GetEnumSelectList<JobType>()" class="form-select" id="jobType"></select>
-            </div>
-            <div class="sf-col-2">
-                <label class="form-label" asp-for="Parallelism">Parallelism</label>
-                <input asp-for="Parallelism" class="form-control" min="1" max="50" />
-            </div>
-            <div class="sf-col-2">
-                <label class="form-label" asp-for="RetryCount">Retry</label>
-                <input asp-for="RetryCount" class="form-control" min="0" max="10" />
-            </div>
-            <div class="sf-col-2 js-type js-password">
-                <label class="form-label" asp-for="GeneratePasswordLength">Pass len</label>
-                <input asp-for="GeneratePasswordLength" class="form-control" min="12" max="64" />
-            </div>
-            <div class="sf-col-3 d-flex align-items-end gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" asp-for="DryRun" />
-                    <label class="form-check-label" asp-for="DryRun">Dry-run</label>
-                </div>
-                <div class="form-check js-type js-password">
-                    <input class="form-check-input" asp-for="DeauthorizeAfterChange" />
-                    <label class="form-check-label" asp-for="DeauthorizeAfterChange">Deauth after password change</label>
+            <div class="sf-col-12">
+                <div class="sf-job-type-grid" id="jobTypeCards">
+                    @foreach (var type in Enum.GetValues<JobType>())
+                    {
+                        var hint = typeHints.TryGetValue(type, out var mapped)
+                            ? mapped
+                            : (type.ToString(), "Без описания");
+                        var activeClass = Model.Type == type ? "is-active" : null;
+                        <button type="button"
+                                class="sf-job-type-card @activeClass"
+                                data-job-type="@type"
+                                data-job-title="@hint.Item1"
+                                data-job-description="@hint.Item2">
+                            <span class="sf-job-type-title">@hint.Item1</span>
+                            <span class="sf-job-type-desc">@hint.Item2</span>
+                        </button>
+                    }
                 </div>
             </div>
 
             <div class="sf-col-12">
-                <div class="sf-subtitle mb-2">Параметры по типу задачи</div>
-            </div>
-
-            <div class="sf-col-4 js-type js-profile">
-                <label class="form-label" asp-for="DisplayName">Display Name</label>
-                <input asp-for="DisplayName" class="form-control" />
-            </div>
-            <div class="sf-col-8 js-type js-profile">
-                <label class="form-label" asp-for="Summary">Summary</label>
-                <input asp-for="Summary" class="form-control" />
-            </div>
-            <div class="sf-col-4 js-type js-profile">
-                <label class="form-label" asp-for="RealName">Real Name</label>
-                <input asp-for="RealName" class="form-control" />
-            </div>
-            <div class="sf-col-2 js-type js-profile">
-                <label class="form-label" asp-for="Country">Country</label>
-                <input asp-for="Country" class="form-control" />
-            </div>
-            <div class="sf-col-2 js-type js-profile">
-                <label class="form-label" asp-for="State">State</label>
-                <input asp-for="State" class="form-control" />
-            </div>
-            <div class="sf-col-2 js-type js-profile">
-                <label class="form-label" asp-for="City">City</label>
-                <input asp-for="City" class="form-control" />
-            </div>
-            <div class="sf-col-2 js-type js-profile">
-                <label class="form-label" asp-for="CustomUrl">Custom URL</label>
-                <input asp-for="CustomUrl" class="form-control" />
-            </div>
-
-            <div class="sf-col-4 js-type js-privacy">
-                <label class="form-label">Profile private</label>
-                <select asp-for="ProfilePrivate" class="form-select">
-                    <option value="">не менять</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                </select>
-            </div>
-            <div class="sf-col-4 js-type js-privacy">
-                <label class="form-label">Friends private</label>
-                <select asp-for="FriendsPrivate" class="form-select">
-                    <option value="">не менять</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                </select>
-            </div>
-            <div class="sf-col-4 js-type js-privacy">
-                <label class="form-label">Inventory private</label>
-                <select asp-for="InventoryPrivate" class="form-select">
-                    <option value="">не менять</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                </select>
-            </div>
-
-            <div class="sf-col-12 js-type js-avatar">
-                <label class="form-label" asp-for="AvatarBase64">Avatar Base64</label>
-                <textarea asp-for="AvatarBase64" class="form-control" rows="3" placeholder="iVBORw0KGgo..."></textarea>
-            </div>
-
-            <div class="sf-col-6 js-type js-tags">
-                <label class="form-label" asp-for="TagsRaw">Tags</label>
-                <input asp-for="TagsRaw" class="form-control" placeholder="tag-a,tag-b" />
-            </div>
-            <div class="sf-col-6 js-type js-group">
-                <label class="form-label" asp-for="FolderName">Folder</label>
-                <input asp-for="FolderName" class="form-control" />
-            </div>
-            <div class="sf-col-12 js-type js-note">
-                <label class="form-label" asp-for="NoteText">Note</label>
-                <textarea asp-for="NoteText" class="form-control" rows="3"></textarea>
-            </div>
-
-            <div class="sf-col-6 js-type js-password">
-                <label class="form-label" asp-for="FixedNewPassword">Fixed new password (optional)</label>
-                <input asp-for="FixedNewPassword" class="form-control" autocomplete="off" />
-                <div class="sf-subtitle mt-1">Если пусто, для каждого аккаунта будет сгенерирован уникальный пароль.</div>
-            </div>
-
-            <div class="sf-col-12 js-type js-friends-add">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <label class="form-label mb-0">Пары аккаунтов для friends-add-by-invite</label>
-                    <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="addFriendPair">Добавить пару</button>
-                </div>
-                <div class="sf-subtitle mb-2">Источник генерирует invite link, целевой аккаунт принимает его автоматически.</div>
-                <div id="friendsPairsContainer" class="d-flex flex-column gap-2">
-                    @for (var i = 0; i < Model.FriendsPairs.Count; i++)
-                    {
-                        <div class="row g-2 js-friend-pair-row" data-index="@i">
-                            <div class="col-md-5">
-                                <select class="form-select" name="FriendsPairs[@i].SourceAccountId">
-                                    <option value="">Source account</option>
-                                    @foreach (var account in Model.AvailableAccounts)
-                                    {
-                                        <option value="@account.Id" selected="@(Model.FriendsPairs[i].SourceAccountId == account.Id)">@account.LoginName (@account.DisplayName)</option>
-                                    }
-                                </select>
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Общие параметры</h2>
+                        <div class="sf-subtitle">Настройки очереди и выполнения задачи.</div>
+                    </div>
+                    <div class="sf-grid">
+                        <div class="sf-col-4">
+                            <label class="form-label" asp-for="Type"></label>
+                            <input type="hidden" id="jobType" name="Type" value="@Model.Type" />
+                            <div id="selectedTypeLabel" class="form-control d-flex align-items-center">
+                                @selectedHint.Item1 (@Model.Type)
                             </div>
-                            <div class="col-md-5">
-                                <select class="form-select" name="FriendsPairs[@i].TargetAccountId">
-                                    <option value="">Target account</option>
-                                    @foreach (var account in Model.AvailableAccounts)
-                                    {
-                                        <option value="@account.Id" selected="@(Model.FriendsPairs[i].TargetAccountId == account.Id)">@account.LoginName (@account.DisplayName)</option>
-                                    }
-                                </select>
+                            <span asp-validation-for="Type" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-2">
+                            <label class="form-label" asp-for="Parallelism"></label>
+                            <input asp-for="Parallelism" class="form-control" min="1" max="50" />
+                            <span asp-validation-for="Parallelism" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-2">
+                            <label class="form-label" asp-for="RetryCount"></label>
+                            <input asp-for="RetryCount" class="form-control" min="0" max="10" />
+                            <span asp-validation-for="RetryCount" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-4 js-type js-password">
+                            <label class="form-label" asp-for="GeneratePasswordLength"></label>
+                            <input asp-for="GeneratePasswordLength" class="form-control" min="12" max="64" />
+                            <span asp-validation-for="GeneratePasswordLength" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-12 d-flex gap-4 flex-wrap align-items-center">
+                            <div class="form-check">
+                                <input class="form-check-input" asp-for="DryRun" />
+                                <label class="form-check-label" asp-for="DryRun"></label>
                             </div>
-                            <div class="col-md-2 d-grid">
-                                <button type="button" class="btn sf-btn sf-btn-danger btn-sm js-remove-friend-pair">Удалить</button>
+                            <div class="form-check js-type js-password">
+                                <input class="form-check-input" asp-for="DeauthorizeAfterChange" />
+                                <label class="form-check-label" asp-for="DeauthorizeAfterChange"></label>
                             </div>
                         </div>
-                    }
-                </div>
-            </div>
-
-            <div class="sf-col-12 js-type js-friends-family">
-                <label class="form-label" asp-for="FamilyMainAccountId">Главный аккаунт</label>
-                <select asp-for="FamilyMainAccountId" class="form-select mb-2">
-                    <option value="">Выберите главный аккаунт</option>
-                    @foreach (var main in Model.MainAccountOptions)
-                    {
-                        <option value="@main.Id">@main.LoginName (@main.DisplayName)</option>
-                    }
-                </select>
-
-                <label class="form-label" asp-for="FamilyChildAccountIds">Дочерние аккаунты (опционально)</label>
-                <select asp-for="FamilyChildAccountIds" class="form-select" multiple size="8">
-                    @foreach (var account in Model.AvailableAccounts)
-                    {
-                        <option value="@account.Id">@account.LoginName (@account.DisplayName)</option>
-                    }
-                </select>
-                <div class="sf-subtitle mt-1">Если не выбрать child-аккаунты вручную, сервис возьмёт всех детей главного аккаунта из семейной модели.</div>
+                        <div class="sf-col-12">
+                            <div class="sf-advanced-box">
+                                <strong id="selectedTypeTitle">@selectedHint.Item1</strong>
+                                <div id="selectedTypeDescription" class="sf-subtitle mt-1">@selectedHint.Item2</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
 
             <div class="sf-col-12 js-type js-account-select">
-                <label class="form-label">Аккаунты</label>
-                <div class="d-flex gap-2 mb-2">
-                    <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="selectAllAccounts">Выбрать все</button>
-                    <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="clearAllAccounts">Снять все</button>
-                </div>
-                <div class="sf-card p-2" style="max-height: 340px; overflow: auto;">
-                    @foreach (var account in Model.AvailableAccounts)
-                    {
-                        <div class="form-check">
-                            <input class="form-check-input account-checkbox" type="checkbox" name="SelectedAccountIds" value="@account.Id" id="acc_@account.Id" checked="@(Model.SelectedAccountIds.Contains(account.Id))" />
-                            <label class="form-check-label" for="acc_@account.Id">
-                                @account.LoginName (@account.DisplayName) - @account.Status
-                            </label>
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <h2 class="sf-inline-title">Аккаунты для задачи</h2>
+                            <div class="sf-subtitle">Выбрано: <span id="selectedAccountsCount">0</span> из @totalAccounts.</div>
                         </div>
-                    }
-                </div>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="selectAllAccounts">Выбрать все</button>
+                            <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="clearAllAccounts">Снять все</button>
+                        </div>
+                    </div>
+                    <div class="sf-grid">
+                        <div class="sf-col-12">
+                            <input type="text" class="form-control" id="accountSearchInput" placeholder="Поиск по login, display name или статусу..." />
+                        </div>
+                        <div class="sf-col-12">
+                            <div class="sf-account-picker" id="accountPicker">
+                                @foreach (var account in Model.AvailableAccounts)
+                                {
+                                    var display = string.IsNullOrWhiteSpace(account.DisplayName)
+                                        ? "без display name"
+                                        : account.DisplayName;
+                                    var selected = Model.SelectedAccountIds.Contains(account.Id) ? "checked" : null;
+                                    <label class="sf-account-item"
+                                           data-search="@($"{account.LoginName} {display} {account.Status}".ToLowerInvariant())">
+                                        <input class="form-check-input account-checkbox"
+                                               type="checkbox"
+                                               name="SelectedAccountIds"
+                                               value="@account.Id"
+                                               checked="@selected" />
+                                        <span>
+                                            <span class="sf-account-item-title">@account.LoginName</span>
+                                            <span class="sf-account-item-meta">@display</span>
+                                            <span class="sf-account-item-meta">Статус: @account.Status</span>
+                                        </span>
+                                    </label>
+                                }
+                            </div>
+                            <span asp-validation-for="SelectedAccountIds" class="text-danger"></span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-profile">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Профиль Steam</h2>
+                        <div class="sf-subtitle">Можно менять имя, описание, real name, локацию и custom URL в одном запуске.</div>
+                    </div>
+                    <div class="sf-form-mini-grid">
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="DisplayName"></label>
+                            <input asp-for="DisplayName" class="form-control" placeholder="Новое отображаемое имя" />
+                            <span asp-validation-for="DisplayName" class="text-danger"></span>
+                            <div class="form-text">Главное поле для «смены имени» в профиле.</div>
+                        </article>
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="Summary"></label>
+                            <textarea asp-for="Summary" class="form-control" rows="3" placeholder="Короткое описание профиля"></textarea>
+                            <span asp-validation-for="Summary" class="text-danger"></span>
+                        </article>
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="RealName"></label>
+                            <input asp-for="RealName" class="form-control" placeholder="Имя из профиля Steam" />
+                            <span asp-validation-for="RealName" class="text-danger"></span>
+                        </article>
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="CustomUrl"></label>
+                            <input asp-for="CustomUrl" class="form-control" placeholder="custom-vanity-url" />
+                            <span asp-validation-for="CustomUrl" class="text-danger"></span>
+                        </article>
+                        <article class="sf-mini-card sf-mini-card-wide">
+                            <div class="sf-mini-card-title">Локация</div>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <label class="form-label" asp-for="Country"></label>
+                                    <input asp-for="Country" class="form-control" placeholder="RU / US / ..." />
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" asp-for="State"></label>
+                                    <input asp-for="State" class="form-control" placeholder="Moscow / California" />
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" asp-for="City"></label>
+                                    <input asp-for="City" class="form-control" placeholder="Москва / Seattle" />
+                                </div>
+                            </div>
+                            <span asp-validation-for="Country" class="text-danger"></span>
+                            <span asp-validation-for="State" class="text-danger"></span>
+                            <span asp-validation-for="City" class="text-danger"></span>
+                        </article>
+                    </div>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-privacy">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Приватность</h2>
+                        <div class="sf-subtitle">Выберите только те флаги, которые нужно изменить. Пустое значение = без изменений.</div>
+                    </div>
+                    <div class="sf-form-mini-grid">
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="ProfilePrivate"></label>
+                            <select asp-for="ProfilePrivate" class="form-select">
+                                <option value="">Не менять</option>
+                                <option value="true">Приватный</option>
+                                <option value="false">Публичный</option>
+                            </select>
+                            <span asp-validation-for="ProfilePrivate" class="text-danger"></span>
+                        </article>
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="FriendsPrivate"></label>
+                            <select asp-for="FriendsPrivate" class="form-select">
+                                <option value="">Не менять</option>
+                                <option value="true">Приватный</option>
+                                <option value="false">Публичный</option>
+                            </select>
+                            <span asp-validation-for="FriendsPrivate" class="text-danger"></span>
+                        </article>
+                        <article class="sf-mini-card">
+                            <label class="form-label" asp-for="InventoryPrivate"></label>
+                            <select asp-for="InventoryPrivate" class="form-select">
+                                <option value="">Не менять</option>
+                                <option value="true">Приватный</option>
+                                <option value="false">Публичный</option>
+                            </select>
+                            <span asp-validation-for="InventoryPrivate" class="text-danger"></span>
+                        </article>
+                    </div>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-avatar">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Смена аватара</h2>
+                        <div class="sf-subtitle">Приоритет источников: файл -> URL -> avatarBase64. Максимальный размер: 2 МБ.</div>
+                    </div>
+                    <div class="sf-grid">
+                        <div class="sf-col-6">
+                            <label class="form-label" asp-for="AvatarFile"></label>
+                            <input asp-for="AvatarFile" class="form-control" type="file" accept="image/*" />
+                            <span asp-validation-for="AvatarFile" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-6">
+                            <label class="form-label" asp-for="AvatarUrl"></label>
+                            <input asp-for="AvatarUrl" class="form-control" placeholder="https://example.com/avatar.png" />
+                            <span asp-validation-for="AvatarUrl" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-12">
+                            <details class="sf-advanced-box">
+                                <summary>Расширенный режим: base64</summary>
+                                <label class="form-label mt-2" asp-for="AvatarBase64"></label>
+                                <textarea asp-for="AvatarBase64" class="form-control" rows="3" placeholder="iVBORw0KGgo..."></textarea>
+                                <span asp-validation-for="AvatarBase64" class="text-danger"></span>
+                            </details>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-tags">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Назначение тегов</h2>
+                        <div class="sf-subtitle">Разделители: запятая, `;` или `|`.</div>
+                    </div>
+                    <label class="form-label" asp-for="TagsRaw"></label>
+                    <input asp-for="TagsRaw" class="form-control" placeholder="фарм,основной,manual-check" />
+                    <span asp-validation-for="TagsRaw" class="text-danger"></span>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-group">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Перемещение в папку</h2>
+                    </div>
+                    <label class="form-label" asp-for="FolderName"></label>
+                    <input asp-for="FolderName" class="form-control" placeholder="farm-accounts / region-eu / ..." />
+                    <span asp-validation-for="FolderName" class="text-danger"></span>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-note">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Добавить заметку</h2>
+                    </div>
+                    <label class="form-label" asp-for="NoteText"></label>
+                    <textarea asp-for="NoteText" class="form-control" rows="4" placeholder="Комментарий к аккаунтам..."></textarea>
+                    <span asp-validation-for="NoteText" class="text-danger"></span>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-password">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Смена пароля</h2>
+                        <div class="sf-subtitle">Если поле пароля пустое, для каждого аккаунта сгенерируется свой уникальный пароль.</div>
+                    </div>
+                    <div class="sf-grid">
+                        <div class="sf-col-6">
+                            <label class="form-label" asp-for="FixedNewPassword"></label>
+                            <input asp-for="FixedNewPassword" class="form-control" autocomplete="off" />
+                            <span asp-validation-for="FixedNewPassword" class="text-danger"></span>
+                        </div>
+                        <div class="sf-col-6 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" asp-for="DeauthorizeAfterChange" />
+                                <label class="form-check-label" asp-for="DeauthorizeAfterChange"></label>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-friends-add">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <h2 class="sf-inline-title">Friends: add by invite</h2>
+                            <div class="sf-subtitle">Для каждой пары source генерирует invite-link, target принимает приглашение.</div>
+                        </div>
+                        <button type="button" class="btn sf-btn sf-btn-secondary btn-sm" id="addFriendPair">Добавить пару</button>
+                    </div>
+                    <div id="friendsPairsContainer" class="d-flex flex-column gap-2">
+                        @for (var i = 0; i < Model.FriendsPairs.Count; i++)
+                        {
+                            <div class="row g-2 js-friend-pair-row" data-index="@i">
+                                <div class="col-md-5">
+                                    <label class="form-label">Source аккаунт</label>
+                                    <select class="form-select" name="FriendsPairs[@i].SourceAccountId">
+                                        <option value="">Выберите source</option>
+                                        @foreach (var account in Model.AvailableAccounts)
+                                        {
+                                            var selected = Model.FriendsPairs[i].SourceAccountId == account.Id ? "selected" : null;
+                                            var display = string.IsNullOrWhiteSpace(account.DisplayName) ? "без display name" : account.DisplayName;
+                                            <option value="@account.Id" selected="@selected">@account.LoginName (@display)</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label">Target аккаунт</label>
+                                    <select class="form-select" name="FriendsPairs[@i].TargetAccountId">
+                                        <option value="">Выберите target</option>
+                                        @foreach (var account in Model.AvailableAccounts)
+                                        {
+                                            var selected = Model.FriendsPairs[i].TargetAccountId == account.Id ? "selected" : null;
+                                            var display = string.IsNullOrWhiteSpace(account.DisplayName) ? "без display name" : account.DisplayName;
+                                            <option value="@account.Id" selected="@selected">@account.LoginName (@display)</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-2 d-grid align-items-end">
+                                    <button type="button" class="btn sf-btn sf-btn-danger btn-sm js-remove-friend-pair">Удалить</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <span asp-validation-for="FriendsPairs" class="text-danger"></span>
+                </section>
+            </div>
+
+            <div class="sf-col-12 js-type js-friends-family">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Friends: connect family</h2>
+                        <div class="sf-subtitle">Выберите main-аккаунт. Цели подтягиваются автоматически из синхронизированной Steam Family.</div>
+                    </div>
+                    <label class="form-label" asp-for="FamilyMainAccountId"></label>
+                    <select asp-for="FamilyMainAccountId" class="form-select">
+                        <option value="">Выберите главный аккаунт</option>
+                        @foreach (var main in Model.MainAccountOptions)
+                        {
+                            var display = string.IsNullOrWhiteSpace(main.DisplayName) ? "без display name" : main.DisplayName;
+                            <option value="@main.Id">@main.LoginName (@display) — @main.Status</option>
+                        }
+                    </select>
+                    <span asp-validation-for="FamilyMainAccountId" class="text-danger"></span>
+                </section>
             </div>
 
             <div class="sf-col-12 d-flex gap-2">
-                <button class="btn sf-btn sf-btn-primary" type="submit">Запустить</button>
+                <button class="btn sf-btn sf-btn-primary" type="submit">Запустить задачу</button>
                 <a class="btn sf-btn sf-btn-secondary" asp-action="Index">Отмена</a>
             </div>
         </form>
@@ -205,9 +404,25 @@
 </section>
 
 @section Scripts {
+    <partial name="_ValidationScriptsPartial" />
     <script>
         (() => {
-            const typeSelect = document.getElementById("jobType");
+            const typeInput = document.getElementById("jobType");
+            const typeLabel = document.getElementById("selectedTypeLabel");
+            const typeTitle = document.getElementById("selectedTypeTitle");
+            const typeDescription = document.getElementById("selectedTypeDescription");
+            const typeCards = Array.from(document.querySelectorAll(".sf-job-type-card"));
+            const allBlocks = Array.from(document.querySelectorAll(".js-type"));
+            const accountCheckboxes = () => Array.from(document.querySelectorAll(".account-checkbox"));
+            const selectedCount = document.getElementById("selectedAccountsCount");
+            const accountSearch = document.getElementById("accountSearchInput");
+            const accountItems = Array.from(document.querySelectorAll(".sf-account-item"));
+            const selectAllButton = document.getElementById("selectAllAccounts");
+            const clearAllButton = document.getElementById("clearAllAccounts");
+            if (!typeInput || !typeCards.length) {
+                return;
+            }
+
             const groups = {
                 ProfileUpdate: [".js-profile", ".js-account-select"],
                 PrivacyUpdate: [".js-privacy", ".js-account-select"],
@@ -222,41 +437,129 @@
                 FriendsAddByInvite: [".js-friends-add"],
                 FriendsConnectFamilyMain: [".js-friends-family"]
             };
+            const defaultType = "SessionValidate";
 
-            const allBlocks = Array.from(document.querySelectorAll(".js-type"));
-            function updateByType() {
-                const type = typeSelect.value;
-                allBlocks.forEach(el => { el.style.display = "none"; });
-                (groups[type] || []).forEach(selector => {
-                    document.querySelectorAll(selector).forEach(el => { el.style.display = ""; });
-                });
+            function normalizeType(rawValue) {
+                const raw = (rawValue || "").trim();
+                if (!raw) {
+                    return "";
+                }
+
+                const exact = Object.keys(groups).find(x => x === raw);
+                if (exact) {
+                    return exact;
+                }
+
+                const lowered = raw.toLowerCase();
+                const matched = Object.keys(groups).find(x => x.toLowerCase() === lowered);
+                return matched || "";
             }
 
-            document.getElementById("selectAllAccounts")?.addEventListener("click", () => {
-                document.querySelectorAll(".account-checkbox").forEach(cb => cb.checked = true);
+            function renderTypeMeta(type) {
+                const card = typeCards.find(x => x.dataset.jobType === type);
+                const title = card?.dataset.jobTitle || type;
+                const description = card?.dataset.jobDescription || "Описание типа задачи недоступно.";
+                if (typeLabel) {
+                    typeLabel.textContent = `${title} (${type})`;
+                }
+                if (typeTitle) {
+                    typeTitle.textContent = title;
+                }
+                if (typeDescription) {
+                    typeDescription.textContent = description;
+                }
+            }
+
+            function setType(nextType) {
+                const normalized = normalizeType(nextType) || defaultType;
+                typeInput.value = normalized;
+                updateTypeVisibility();
+            }
+
+            function updateSelectedCount() {
+                if (!selectedCount) {
+                    return;
+                }
+
+                const count = accountCheckboxes().filter(x => x.checked).length;
+                selectedCount.textContent = String(count);
+            }
+
+            function updateTypeVisibility() {
+                const type = normalizeType(typeInput.value) || defaultType;
+                typeInput.value = type;
+                allBlocks.forEach(el => {
+                    el.style.display = "none";
+                });
+
+                (groups[type] || [".js-account-select"]).forEach(selector => {
+                    document.querySelectorAll(selector).forEach(el => {
+                        el.style.display = "";
+                    });
+                });
+
+                typeCards.forEach(card => {
+                    card.classList.toggle("is-active", card.dataset.jobType === type);
+                });
+                renderTypeMeta(type);
+            }
+
+            typeCards.forEach(card => {
+                card.addEventListener("click", () => {
+                    const nextType = card.dataset.jobType;
+                    if (!nextType) {
+                        return;
+                    }
+                    setType(nextType);
+                });
             });
-            document.getElementById("clearAllAccounts")?.addEventListener("click", () => {
-                document.querySelectorAll(".account-checkbox").forEach(cb => cb.checked = false);
+
+            accountCheckboxes().forEach(cb => cb.addEventListener("change", updateSelectedCount));
+
+            selectAllButton?.addEventListener("click", () => {
+                accountItems.forEach(item => {
+                    if (item.style.display === "none") {
+                        return;
+                    }
+
+                    const input = item.querySelector("input[type='checkbox']");
+                    if (input) {
+                        input.checked = true;
+                    }
+                });
+                updateSelectedCount();
+            });
+
+            clearAllButton?.addEventListener("click", () => {
+                accountItems.forEach(item => {
+                    if (item.style.display === "none") {
+                        return;
+                    }
+
+                    const input = item.querySelector("input[type='checkbox']");
+                    if (input) {
+                        input.checked = false;
+                    }
+                });
+                updateSelectedCount();
+            });
+
+            accountSearch?.addEventListener("input", () => {
+                const query = accountSearch.value.trim().toLowerCase();
+                accountItems.forEach(item => {
+                    const haystack = item.dataset.search || "";
+                    item.style.display = !query || haystack.includes(query) ? "" : "none";
+                });
             });
 
             const pairsContainer = document.getElementById("friendsPairsContainer");
             const addPairButton = document.getElementById("addFriendPair");
 
-            function bindPairButtons() {
-                document.querySelectorAll(".js-remove-friend-pair").forEach(btn => {
-                    btn.onclick = () => {
-                        const rows = pairsContainer.querySelectorAll(".js-friend-pair-row");
-                        if (rows.length <= 1) {
-                            return;
-                        }
-
-                        btn.closest(".js-friend-pair-row")?.remove();
-                        reindexPairs();
-                    };
-                });
-            }
-
             function reindexPairs() {
+                if (!pairsContainer) {
+                    return;
+                }
+
                 const rows = pairsContainer.querySelectorAll(".js-friend-pair-row");
                 rows.forEach((row, index) => {
                     row.dataset.index = String(index);
@@ -271,7 +574,29 @@
                 });
             }
 
+            function bindPairButtons() {
+                if (!pairsContainer) {
+                    return;
+                }
+
+                pairsContainer.querySelectorAll(".js-remove-friend-pair").forEach(btn => {
+                    btn.onclick = () => {
+                        const rows = pairsContainer.querySelectorAll(".js-friend-pair-row");
+                        if (rows.length <= 1) {
+                            return;
+                        }
+
+                        btn.closest(".js-friend-pair-row")?.remove();
+                        reindexPairs();
+                    };
+                });
+            }
+
             addPairButton?.addEventListener("click", () => {
+                if (!pairsContainer) {
+                    return;
+                }
+
                 const firstRow = pairsContainer.querySelector(".js-friend-pair-row");
                 if (!firstRow) {
                     return;
@@ -287,8 +612,8 @@
             });
 
             bindPairButtons();
-            typeSelect.addEventListener("change", updateByType);
-            updateByType();
+            setType(typeInput.value);
+            updateSelectedCount();
         })();
     </script>
 }

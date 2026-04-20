@@ -372,6 +372,12 @@ namespace SteamFleet.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int>("AuthFailStreak")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("AutoRetryAfter")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -387,6 +393,13 @@ namespace SteamFleet.Persistence.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("ExternalSource")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset?>("FamilySyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid?>("FolderId")
                         .HasColumnType("uuid");
 
@@ -396,10 +409,26 @@ namespace SteamFleet.Persistence.Migrations
                     b.Property<DateTimeOffset?>("GamesLastSyncAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsExternal")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsFamilyOrganizer")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTimeOffset?>("LastCheckAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("LastErrorAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastRiskAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastRiskReasonCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("LastSensitiveOpAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("LastSuccessAt")
@@ -420,9 +449,6 @@ namespace SteamFleet.Persistence.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
-                    b.Property<Guid?>("ParentAccountId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("PhoneMasked")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -435,8 +461,24 @@ namespace SteamFleet.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<string>("RiskLevel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("RiskSignalStreak")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Status")
                         .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SteamFamilyId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SteamFamilyRole")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
@@ -453,16 +495,24 @@ namespace SteamFleet.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AutoRetryAfter");
+
                     b.HasIndex("FolderId");
+
+                    b.HasIndex("IsExternal");
 
                     b.HasIndex("LastCheckAt");
 
                     b.HasIndex("LoginName")
                         .IsUnique();
 
-                    b.HasIndex("ParentAccountId");
+                    b.HasIndex("RiskLevel");
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("SteamFamilyId");
+
+                    b.HasIndex("SteamId64");
 
                     b.ToTable("steam_accounts", (string)null);
                 });
@@ -793,14 +843,7 @@ namespace SteamFleet.Persistence.Migrations
                         .HasForeignKey("FolderId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("SteamFleet.Domain.Entities.SteamAccount", "ParentAccount")
-                        .WithMany("ChildAccounts")
-                        .HasForeignKey("ParentAccountId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Folder");
-
-                    b.Navigation("ParentAccount");
                 });
 
             modelBuilder.Entity("SteamFleet.Domain.Entities.SteamAccountGame", b =>
@@ -860,8 +903,6 @@ namespace SteamFleet.Persistence.Migrations
 
             modelBuilder.Entity("SteamFleet.Domain.Entities.SteamAccount", b =>
                 {
-                    b.Navigation("ChildAccounts");
-
                     b.Navigation("Games");
 
                     b.Navigation("JobItems");

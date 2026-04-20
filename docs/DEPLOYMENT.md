@@ -13,6 +13,11 @@ Use `.env` (see `.env.example`):
 - `ADMIN_PASSWORD`
 - `SECRETS_MASTER_KEY_B64`
 - `WORKER_COUNT`
+- optional anti-risk tuning:
+  - `SteamGateway__MinSensitiveIntervalSeconds` (default: `3`)
+  - `SteamGateway__AutoRetryCooldownMinutes` (default: `20`)
+  - `SteamGateway__GuardRetryDelaySeconds` (default: `30`)
+  - `SteamGateway__MaxAuthFailuresBeforeCooldown` (default: `3`)
 
 ## Run
 ```bash
@@ -48,3 +53,7 @@ dotnet test SteamFleet.slnx
 - Put reverse proxy/TLS in front of the service.
 - Restrict network access to PostgreSQL and Redis.
 - Enable centralized log collection and backups.
+- Keep anti-risk defaults conservative to avoid Steam auth storms:
+  - do not set sensitive interval to `0` in production
+  - keep guard retry delay >= `30` seconds
+  - cooldown is soft (jobs), manual actions remain available but warned in UI.

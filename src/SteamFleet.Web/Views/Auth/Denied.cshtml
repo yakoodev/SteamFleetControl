@@ -1,4 +1,25 @@
 @{
     ViewData["Title"] = "Доступ запрещен";
 }
-<div class="alert alert-warning">У вас нет прав для этого действия.</div>
+
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Доступ ограничен</h1>
+        <div class="sf-page-subtitle">У текущей роли нет прав на это действие.</div>
+    </div>
+</section>
+
+<section class="sf-card">
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Недостаточно прав</h2>
+    </div>
+    <div class="sf-card-body">
+        <div class="sf-alert sf-alert-warning mb-3">
+            Запрошенная операция доступна только для ролей с более высоким уровнем доступа.
+        </div>
+        <div class="sf-denied-actions">
+            <a class="btn sf-btn sf-btn-secondary" asp-controller="Accounts" asp-action="Index">К аккаунтам</a>
+            <a class="btn sf-btn sf-btn-primary" asp-controller="Jobs" asp-action="Index">К задачам</a>
+        </div>
+    </div>
+</section>

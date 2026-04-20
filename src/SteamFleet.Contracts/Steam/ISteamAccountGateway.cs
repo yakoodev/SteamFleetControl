@@ -126,6 +126,33 @@ public sealed class SteamFriendsSnapshot
     public List<SteamFriend> Friends { get; set; } = [];
 }
 
+public sealed class SteamFamilyMember
+{
+    public string SteamId64 { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? Role { get; set; }
+    public bool IsOrganizer { get; set; }
+}
+
+public sealed class SteamFamilySnapshot
+{
+    public string? FamilyId { get; set; }
+    public string? SelfRole { get; set; }
+    public bool IsOrganizer { get; set; }
+    public DateTimeOffset SyncedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<SteamFamilyMember> Members { get; set; } = [];
+}
+
+public sealed class SteamPublicMemberData
+{
+    public string SteamId64 { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? ProfileUrl { get; set; }
+    public bool IsPublic { get; set; } = true;
+    public DateTimeOffset SyncedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<SteamOwnedGame> Games { get; set; } = [];
+}
+
 public interface ISteamAccountGateway
 {
     Task<SteamAuthResult> AuthenticateAsync(SteamCredentials credentials, CancellationToken cancellationToken = default);
@@ -151,5 +178,16 @@ public interface ISteamAccountGateway
     Task<SteamFriendInviteLink> GetFriendInviteLinkAsync(string sessionPayload, CancellationToken cancellationToken = default);
     Task<SteamOperationResult> AcceptFriendInviteAsync(string sessionPayload, string inviteUrl, CancellationToken cancellationToken = default);
     Task<SteamFriendsSnapshot> GetFriendsSnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> InviteToFamilyGroupAsync(
+        string sessionPayload,
+        string targetSteamId64,
+        bool inviteAsChild = true,
+        CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptFamilyInviteAsync(
+        string sessionPayload,
+        string? sourceSteamId64 = null,
+        CancellationToken cancellationToken = default);
+    Task<SteamFamilySnapshot> GetFamilySnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default);
+    Task<SteamPublicMemberData> GetPublicMemberDataAsync(string steamId64, CancellationToken cancellationToken = default);
     Task<string?> ResolveSteamIdAsync(string loginName, CancellationToken cancellationToken = default);
 }

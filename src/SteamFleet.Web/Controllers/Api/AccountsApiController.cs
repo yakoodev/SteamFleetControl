@@ -83,6 +83,71 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
         CancellationToken cancellationToken)
         => accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
 
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("qr/start")]
+    public async Task<ActionResult<AccountQrOnboardingStartResult>> StartQrOnboarding(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.StartQrOnboardingAsync(ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpGet("qr/{flowId:guid}")]
+    public async Task<ActionResult<AccountQrOnboardingPollResult>> PollQrOnboarding(Guid flowId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.PollQrOnboardingAsync(flowId, ActorId, ClientIp, cancellationToken);
+            if (result.Status == AccountQrOnboardingStatus.Conflict)
+            {
+                return Conflict(result);
+            }
+
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("qr/{flowId:guid}/cancel")]
+    public async Task<IActionResult> CancelQrOnboarding(Guid flowId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await accountService.CancelQrOnboardingAsync(flowId, ActorId, ClientIp, cancellationToken);
+            return NoContent();
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/authenticate/qr/start")]
@@ -213,14 +278,99 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/sync")]
+    public async Task<ActionResult<AccountFamilySnapshotDto>> SyncFamily(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.SyncFamilyFromSteamAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [HttpGet("{id:guid}/family")]
+    public async Task<ActionResult<AccountFamilySnapshotDto>> GetFamily(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.GetFamilySnapshotAsync(id, cancellationToken);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/invite")]
+    public async Task<ActionResult<SteamOperationResult>> InviteToFamily(
+        Guid id,
+        [FromBody] FamilyInviteRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.InviteToFamilyAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/family/accept-invite")]
+    public async Task<ActionResult<SteamOperationResult>> AcceptFamilyInvite(
+        Guid id,
+        [FromBody] FamilyAcceptInviteRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.AcceptFamilyInviteAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/family/assign-parent")]
     public async Task<ActionResult<AccountDto>> AssignParent(
         Guid id,
         [FromBody] FamilyAssignParentRequest request,
         CancellationToken cancellationToken)
     {
-        var account = await accountService.AssignParentAsync(id, request.ParentAccountId, ActorId, ClientIp, cancellationToken);
-        return account is null ? NotFound() : Ok(account);
+        await Task.CompletedTask;
+        return StatusCode(StatusCodes.Status409Conflict, new
+        {
+            errorMessage = "Manual family assignment is disabled. Use /api/accounts/{id}/family/sync.",
+            reasonCode = SteamReasonCodes.EndpointRejected,
+            retryable = false
+        });
     }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
@@ -228,8 +378,13 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
     [HttpPost("{id:guid}/family/remove-parent")]
     public async Task<ActionResult<AccountDto>> RemoveParent(Guid id, CancellationToken cancellationToken)
     {
-        var account = await accountService.RemoveParentAsync(id, ActorId, ClientIp, cancellationToken);
-        return account is null ? NotFound() : Ok(account);
+        await Task.CompletedTask;
+        return StatusCode(StatusCodes.Status409Conflict, new
+        {
+            errorMessage = "Manual family assignment is disabled. Use /api/accounts/{id}/family/sync.",
+            reasonCode = SteamReasonCodes.EndpointRejected,
+            retryable = false
+        });
     }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
@@ -365,5 +520,22 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
             reasonCode,
             retryable = reasonCode == SteamReasonCodes.AuthSessionMissing
         });
+    }
+
+    private ActionResult<SteamOperationResult> MapOperationResult(SteamOperationResult result)
+    {
+        if (result.Success)
+        {
+            return Ok(result);
+        }
+
+        var reasonCode = string.IsNullOrWhiteSpace(result.ReasonCode)
+            ? SteamReasonCodes.Unknown
+            : result.ReasonCode;
+        var statusCode = reasonCode is SteamReasonCodes.AuthSessionMissing or SteamReasonCodes.GuardPending
+            ? StatusCodes.Status409Conflict
+            : StatusCodes.Status400BadRequest;
+
+        return StatusCode(statusCode, result);
     }
 }

@@ -108,10 +108,13 @@ public sealed class NewFeaturesFlowTests
 
         var parent = CreateAccount("main", crypto);
         var child = CreateAccount("child", crypto);
+        parent.SteamFamilyId = "family-itest";
+        parent.SteamFamilyRole = "Organizer";
+        parent.IsFamilyOrganizer = true;
+        child.SteamFamilyId = "family-itest";
+        child.SteamFamilyRole = "Adult";
         await dbContext.SteamAccounts.AddRangeAsync(parent, child);
         await dbContext.SaveChangesAsync();
-
-        await accountService.AssignParentAsync(child.Id, parent.Id, "itest", "127.0.0.1");
 
         var now = DateTimeOffset.UtcNow;
         parent.ProfileUrl = "https://steamcommunity.com/profiles/76561198000000001";
@@ -173,6 +176,150 @@ public sealed class NewFeaturesFlowTests
         Assert.Equal(parent.Id, familyHalfLife.SourceAccountId);
     }
 
+    [Fact]
+    public async Task QrOnboarding_Completed_CreatesAccount()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var gateway = new FakeSteamGateway
+        {
+            NextQrPollResult = new SteamQrAuthPollResult
+            {
+                Status = SteamQrAuthStatus.Completed,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+                AuthResult = new SteamAuthResult
+                {
+                    Success = true,
+                    AccountName = "qr-onboard-user",
+                    SteamId64 = "76561198012345678",
+                    Session = new SteamSessionInfo
+                    {
+                        CookiePayload = "session::qr-onboard-user",
+                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(2)
+                    }
+                }
+            }
+        };
+        var accountService = new AccountService(dbContext, gateway, crypto, auditService);
+
+        var start = await accountService.StartQrOnboardingAsync("itest", "127.0.0.1");
+        Assert.NotEqual(Guid.Empty, start.FlowId);
+        Assert.StartsWith("data:image/png;base64,", start.QrImageDataUrl);
+        Assert.False(string.IsNullOrWhiteSpace(start.ChallengeUrl));
+
+        var poll = await accountService.PollQrOnboardingAsync(start.FlowId, "itest", "127.0.0.1");
+        Assert.Equal(AccountQrOnboardingStatus.Completed, poll.Status);
+        Assert.Equal(SteamReasonCodes.None, poll.ReasonCode);
+        Assert.NotNull(poll.CreatedAccount);
+        Assert.Equal("qr-onboard-user", poll.CreatedAccount!.LoginName);
+        Assert.Null(poll.ExistingAccount);
+
+        var created = await dbContext.SteamAccounts
+            .Include(x => x.Secret)
+            .SingleAsync(x => x.LoginName == "qr-onboard-user");
+        Assert.Equal("qr-onboard-user", created.LoginName);
+        Assert.Equal("76561198012345678", created.SteamId64);
+        Assert.NotNull(created.Secret);
+        Assert.False(string.IsNullOrWhiteSpace(created.Secret!.EncryptedSessionPayload));
+
+        var events = await auditService.GetAsync(0, 200);
+        Assert.Contains(events, x => x.EventType == AuditEventType.AccountCreated && x.EntityId == created.Id.ToString());
+    }
+
+    [Fact]
+    public async Task QrOnboarding_DuplicateLogin_ReturnsConflict_WithoutCreate()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var gateway = new FakeSteamGateway
+        {
+            NextQrPollResult = new SteamQrAuthPollResult
+            {
+                Status = SteamQrAuthStatus.Completed,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+                AuthResult = new SteamAuthResult
+                {
+                    Success = true,
+                    AccountName = "existing-user",
+                    SteamId64 = "76561198077777777",
+                    Session = new SteamSessionInfo
+                    {
+                        CookiePayload = "session::existing-user",
+                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(2)
+                    }
+                }
+            }
+        };
+        var accountService = new AccountService(dbContext, gateway, crypto, auditService);
+
+        await accountService.CreateAsync(new AccountUpsertRequest
+        {
+            LoginName = "existing-user",
+            DisplayName = "Existing",
+            Password = "Pass1234!"
+        }, "itest", "127.0.0.1");
+
+        var start = await accountService.StartQrOnboardingAsync("itest", "127.0.0.1");
+        var poll = await accountService.PollQrOnboardingAsync(start.FlowId, "itest", "127.0.0.1");
+
+        Assert.Equal(AccountQrOnboardingStatus.Conflict, poll.Status);
+        Assert.Equal(SteamReasonCodes.DuplicateAccount, poll.ReasonCode);
+        Assert.NotNull(poll.ExistingAccount);
+        Assert.Equal("existing-user", poll.ExistingAccount!.LoginName);
+        Assert.Null(poll.CreatedAccount);
+        Assert.Equal(1, await dbContext.SteamAccounts.CountAsync());
+    }
+
+    [Fact]
+    public async Task QrOnboarding_DuplicateSteamId_ReturnsConflict_WithoutCreate()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var gateway = new FakeSteamGateway
+        {
+            NextQrPollResult = new SteamQrAuthPollResult
+            {
+                Status = SteamQrAuthStatus.Completed,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+                AuthResult = new SteamAuthResult
+                {
+                    Success = true,
+                    AccountName = "new-login-name",
+                    SteamId64 = "76561198055555555",
+                    Session = new SteamSessionInfo
+                    {
+                        CookiePayload = "session::new-login-name",
+                        ExpiresAt = DateTimeOffset.UtcNow.AddHours(2)
+                    }
+                }
+            }
+        };
+        var accountService = new AccountService(dbContext, gateway, crypto, auditService);
+
+        await accountService.CreateAsync(new AccountUpsertRequest
+        {
+            LoginName = "old-login",
+            DisplayName = "Existing",
+            Password = "Pass1234!"
+        }, "itest", "127.0.0.1");
+
+        var existing = await dbContext.SteamAccounts.SingleAsync();
+        existing.SteamId64 = "76561198055555555";
+        await dbContext.SaveChangesAsync();
+
+        var start = await accountService.StartQrOnboardingAsync("itest", "127.0.0.1");
+        var poll = await accountService.PollQrOnboardingAsync(start.FlowId, "itest", "127.0.0.1");
+
+        Assert.Equal(AccountQrOnboardingStatus.Conflict, poll.Status);
+        Assert.Equal(SteamReasonCodes.DuplicateAccount, poll.ReasonCode);
+        Assert.NotNull(poll.ExistingAccount);
+        Assert.Equal(existing.Id, poll.ExistingAccount!.Id);
+        Assert.Equal(1, await dbContext.SteamAccounts.CountAsync());
+    }
+
     private static SteamFleetDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<SteamFleetDbContext>()
@@ -211,6 +358,18 @@ public sealed class NewFeaturesFlowTests
     private sealed class FakeSteamGateway : ISteamAccountGateway
     {
         public Dictionary<string, SteamOwnedGamesSnapshot> Snapshots { get; } = new(StringComparer.Ordinal);
+        public SteamQrAuthPollResult NextQrPollResult { get; set; } = new()
+        {
+            Status = SteamQrAuthStatus.Completed,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            AuthResult = new SteamAuthResult
+            {
+                Success = true,
+                AccountName = "qr-user",
+                SteamId64 = "76561198000000000",
+                Session = new SteamSessionInfo { CookiePayload = "session::qr" }
+            }
+        };
 
         public Task<SteamAuthResult> AuthenticateAsync(SteamCredentials credentials, CancellationToken cancellationToken = default)
             => Task.FromResult(new SteamAuthResult
@@ -238,13 +397,11 @@ public sealed class NewFeaturesFlowTests
             => Task.FromResult(new SteamQrAuthPollResult
             {
                 FlowId = flowId,
-                Status = SteamQrAuthStatus.Completed,
-                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
-                AuthResult = new SteamAuthResult
-                {
-                    Success = true,
-                    Session = new SteamSessionInfo { CookiePayload = "session::qr" }
-                }
+                Status = NextQrPollResult.Status,
+                ChallengeUrl = NextQrPollResult.ChallengeUrl,
+                ExpiresAt = NextQrPollResult.ExpiresAt,
+                ErrorMessage = NextQrPollResult.ErrorMessage,
+                AuthResult = NextQrPollResult.AuthResult
             });
 
         public Task CancelQrAuthenticationAsync(Guid flowId, CancellationToken cancellationToken = default)
@@ -338,6 +495,68 @@ public sealed class NewFeaturesFlowTests
             {
                 SyncedAt = DateTimeOffset.UtcNow,
                 Friends = []
+            });
+
+        public Task<SteamOperationResult> InviteToFamilyGroupAsync(
+            string sessionPayload,
+            string targetSteamId64,
+            bool inviteAsChild = true,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload) && !string.IsNullOrWhiteSpace(targetSteamId64),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-itest",
+                    ["targetSteamId64"] = targetSteamId64,
+                    ["inviteRole"] = inviteAsChild ? "Child" : "Adult"
+                }
+            });
+
+        public Task<SteamOperationResult> AcceptFamilyInviteAsync(
+            string sessionPayload,
+            string? sourceSteamId64 = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-itest",
+                    ["sourceSteamId64"] = sourceSteamId64 ?? string.Empty
+                }
+            });
+
+        public Task<SteamFamilySnapshot> GetFamilySnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamFamilySnapshot
+            {
+                FamilyId = "family-itest",
+                SelfRole = "Organizer",
+                IsOrganizer = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Members =
+                [
+                    new SteamFamilyMember
+                    {
+                        SteamId64 = "76561198000000000",
+                        DisplayName = "Fake Member",
+                        Role = "Organizer",
+                        IsOrganizer = true
+                    }
+                ]
+            });
+
+        public Task<SteamPublicMemberData> GetPublicMemberDataAsync(string steamId64, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamPublicMemberData
+            {
+                SteamId64 = steamId64,
+                DisplayName = "External Fake",
+                ProfileUrl = $"https://steamcommunity.com/profiles/{steamId64}",
+                IsPublic = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Games = []
             });
 
         public Task<string?> ResolveSteamIdAsync(string loginName, CancellationToken cancellationToken = default)

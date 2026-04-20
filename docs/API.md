@@ -19,6 +19,9 @@ Base URL (local): `http://localhost:8080`
 
 Steam/session actions:
 - `POST /api/accounts/{id}/authenticate`
+- `POST /api/accounts/qr/start`
+- `GET /api/accounts/qr/{flowId}`
+- `POST /api/accounts/qr/{flowId}/cancel`
 - `POST /api/accounts/{id}/authenticate/qr/start`
 - `GET /api/accounts/{id}/authenticate/qr/{flowId}`
 - `POST /api/accounts/{id}/authenticate/qr/{flowId}/cancel`
@@ -30,6 +33,8 @@ Security/family/games/friends:
 - `POST /api/accounts/{id}/sessions/deauthorize`
 - `POST /api/accounts/{id}/games/refresh`
 - `GET /api/accounts/{id}/games?scope=owned|family|all&q=&page=&pageSize=`
+- `POST /api/accounts/{id}/family/sync`
+- `GET /api/accounts/{id}/family`
 - `POST /api/accounts/{id}/family/assign-parent`
 - `POST /api/accounts/{id}/family/remove-parent`
 - `POST /api/accounts/{id}/friends/invite-link/sync`
@@ -63,3 +68,23 @@ Security/family/games/friends:
 ## Notes
 - Check Swagger for the latest DTO schema and examples.
 - Sensitive endpoints require proper role and are rate-limited.
+- Steam Family is synced from Steam (`/family/sync`) and is the source of truth for family grouping.
+- Legacy routes `family/assign-parent` and `family/remove-parent` are reserved and currently return controlled `409` (manual writes disabled).
+- QR onboarding lifecycle:
+  - `POST /api/accounts/qr/start` returns `{ flowId, challengeUrl, qrImageDataUrl, expiresAt, pollingIntervalSeconds }`.
+  - `GET /api/accounts/qr/{flowId}` returns pending/completed/conflict/failed status.
+  - duplicate account returns `409 Conflict` with `reasonCode=DuplicateAccount` and `existingAccount`.
+
+## Risk-Aware Behavior
+- `AccountDto` includes risk profile fields:
+  - `riskLevel`, `authFailStreak`, `lastRiskReasonCode`, `lastRiskAt`, `autoRetryAfter`
+- Controlled Steam operation errors are returned with:
+  - `errorMessage`
+  - `reasonCode`
+  - `retryable`
+- New/extended reason codes used by hardening:
+  - `CooldownActive`
+  - `InvalidCredentials`
+  - `AccessDenied`
+  - `AuthThrottled`
+  - `SessionReplaced`

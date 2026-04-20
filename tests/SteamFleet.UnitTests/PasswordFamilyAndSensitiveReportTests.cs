@@ -100,7 +100,7 @@ public sealed class PasswordFamilyAndSensitiveReportTests
     }
 
     [Fact]
-    public async Task FamilyRules_EnforceSelfAndOneLevelConstraints()
+    public async Task ManualFamilyEndpoints_AreDisabled()
     {
         await using var dbContext = CreateDbContext();
         var crypto = CreateCrypto();
@@ -109,32 +109,61 @@ public sealed class PasswordFamilyAndSensitiveReportTests
 
         var root = CreateAccount("root", crypto);
         var child = CreateAccount("child", crypto);
-        var leaf = CreateAccount("leaf", crypto);
-        var otherParent = CreateAccount("other-parent", crypto);
-        var otherChild = CreateAccount("other-child", crypto);
-
-        await dbContext.SteamAccounts.AddRangeAsync(root, child, leaf, otherParent, otherChild);
+        await dbContext.SteamAccounts.AddRangeAsync(root, child);
         await dbContext.SaveChangesAsync();
-
-        var firstAssign = await accountService.AssignParentAsync(child.Id, root.Id, "unit-test", "127.0.0.1");
-        Assert.NotNull(firstAssign);
-        Assert.Equal(root.Id, firstAssign!.ParentAccountId);
-
-        var secondAssign = await accountService.AssignParentAsync(otherChild.Id, otherParent.Id, "unit-test", "127.0.0.1");
-        Assert.NotNull(secondAssign);
-        Assert.Equal(otherParent.Id, secondAssign!.ParentAccountId);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            accountService.AssignParentAsync(root.Id, root.Id, "unit-test", "127.0.0.1"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             accountService.AssignParentAsync(root.Id, child.Id, "unit-test", "127.0.0.1"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            accountService.AssignParentAsync(otherParent.Id, root.Id, "unit-test", "127.0.0.1"));
+            accountService.RemoveParentAsync(child.Id, "unit-test", "127.0.0.1"));
+    }
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            accountService.AssignParentAsync(leaf.Id, child.Id, "unit-test", "127.0.0.1"));
+    [Fact]
+    public async Task FamilyInviteAndAccept_WritesAuditEvents()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var accountService = new AccountService(dbContext, new FakeSteamGateway(), crypto, auditService);
+
+        var organizer = CreateAccount("family-organizer", crypto);
+        organizer.SteamId64 = "76561198000001001";
+        organizer.IsFamilyOrganizer = true;
+        organizer.SteamFamilyId = "family-100";
+
+        var target = CreateAccount("family-target", crypto);
+        target.SteamId64 = "76561198000001002";
+
+        await dbContext.SteamAccounts.AddRangeAsync(organizer, target);
+        await dbContext.SaveChangesAsync();
+
+        var inviteResult = await accountService.InviteToFamilyAsync(
+            organizer.Id,
+            new FamilyInviteRequest
+            {
+                TargetAccountId = target.Id,
+                InviteAsChild = true
+            },
+            "unit-test",
+            "127.0.0.1");
+
+        Assert.True(inviteResult.Success);
+
+        var acceptResult = await accountService.AcceptFamilyInviteAsync(
+            target.Id,
+            new FamilyAcceptInviteRequest
+            {
+                SourceAccountId = organizer.Id
+            },
+            "unit-test",
+            "127.0.0.1");
+
+        Assert.True(acceptResult.Success);
+
+        var events = await auditService.GetAsync(0, 500);
+        Assert.Contains(events, x => x.EventType == AuditEventType.FamilyInviteSent);
+        Assert.Contains(events, x => x.EventType == AuditEventType.FamilyInviteAccepted);
     }
 
     [Fact]
@@ -146,7 +175,11 @@ public sealed class PasswordFamilyAndSensitiveReportTests
 
         var parent = CreateAccount("main-account", crypto);
         var child = CreateAccount("family-child", crypto);
-        child.ParentAccountId = parent.Id;
+        parent.SteamFamilyId = "family-100";
+        parent.SteamFamilyRole = "Organizer";
+        parent.IsFamilyOrganizer = true;
+        child.SteamFamilyId = "family-100";
+        child.SteamFamilyRole = "Adult";
 
         await dbContext.SteamAccounts.AddRangeAsync(parent, child);
         await dbContext.SaveChangesAsync();
@@ -433,6 +466,68 @@ public sealed class PasswordFamilyAndSensitiveReportTests
             {
                 SyncedAt = DateTimeOffset.UtcNow,
                 Friends = []
+            });
+
+        public Task<SteamOperationResult> InviteToFamilyGroupAsync(
+            string sessionPayload,
+            string targetSteamId64,
+            bool inviteAsChild = true,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload) && !string.IsNullOrWhiteSpace(targetSteamId64),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-100",
+                    ["targetSteamId64"] = targetSteamId64,
+                    ["inviteRole"] = inviteAsChild ? "Child" : "Adult"
+                }
+            });
+
+        public Task<SteamOperationResult> AcceptFamilyInviteAsync(
+            string sessionPayload,
+            string? sourceSteamId64 = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult
+            {
+                Success = !string.IsNullOrWhiteSpace(sessionPayload),
+                ReasonCode = SteamReasonCodes.None,
+                Data = new Dictionary<string, string>
+                {
+                    ["familyGroupId"] = "family-100",
+                    ["sourceSteamId64"] = sourceSteamId64 ?? string.Empty
+                }
+            });
+
+        public Task<SteamFamilySnapshot> GetFamilySnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamFamilySnapshot
+            {
+                FamilyId = "family-100",
+                SelfRole = "Organizer",
+                IsOrganizer = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Members =
+                [
+                    new SteamFamilyMember
+                    {
+                        SteamId64 = "76561198000000000",
+                        DisplayName = "Fake Member",
+                        Role = "Organizer",
+                        IsOrganizer = true
+                    }
+                ]
+            });
+
+        public Task<SteamPublicMemberData> GetPublicMemberDataAsync(string steamId64, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamPublicMemberData
+            {
+                SteamId64 = steamId64,
+                DisplayName = "External Fake",
+                ProfileUrl = $"https://steamcommunity.com/profiles/{steamId64}",
+                IsPublic = true,
+                SyncedAt = DateTimeOffset.UtcNow,
+                Games = []
             });
 
         public Task<string?> ResolveSteamIdAsync(string loginName, CancellationToken cancellationToken = default)

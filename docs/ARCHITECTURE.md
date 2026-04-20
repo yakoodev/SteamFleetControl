@@ -42,6 +42,28 @@ SteamFleetControl is a modular monolith on .NET 8 with separate runtime processe
 - Secret material never stored in plaintext.
 - Audit events for critical operations.
 
+## Anti-Risk Hardening
+- Persistent risk-state is stored on `steam_accounts`:
+  - `AuthFailStreak`, `RiskSignalStreak`
+  - `LastRiskReasonCode`, `LastRiskAt`
+  - `AutoRetryAfter`, `RiskLevel`, `LastSensitiveOpAt`
+- `IAccountRiskPolicyService` is the single transition engine:
+  - `Normal -> Elevated -> Cooldown`
+  - recovery path via successful sensitive operation
+- Sensitive operations use per-account mutex (`IAccountOperationLock`):
+  - PostgreSQL advisory lock in runtime
+  - in-memory fallback for tests/local fallback
+- Anti-storm pacing:
+  - minimal interval between sensitive operations (+ jitter)
+  - auto-jobs respect cooldown (`CooldownActive`) and move item to `Recoverable`
+- No hard lockout of accounts:
+  - manual admin actions remain available
+  - UI exposes warning/risk profile instead of full block
+- Additional risk audit events:
+  - `RiskSignalDetected`
+  - `RiskCooldownScheduled`
+  - `RiskRecovered`
+
 ## Background Processing
 Hangfire jobs process account operations in batches and store item-level results:
 - dry-run support

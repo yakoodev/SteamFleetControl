@@ -3,24 +3,47 @@
     ViewData["Title"] = "Вход";
 }
 
-<div class="row justify-content-center">
-    <div class="col-xl-4 col-lg-5 col-md-7">
-        <section class="sf-card">
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Вход в SteamFleet</h1>
+        <div class="sf-page-subtitle">Авторизуйтесь под учётной записью панели управления.</div>
+    </div>
+</section>
+
+<div class="row g-3 justify-content-center">
+    <div class="col-xl-5 col-lg-6">
+        <section class="sf-card h-100">
             <div class="sf-card-head">
-                <h1 class="sf-title">Вход в SteamFleet</h1>
-                <div class="sf-subtitle">Управление Steam-аккаунтами, jobs и аудитом</div>
+                <h2 class="sf-title h4 mb-0">Что доступно после входа</h2>
+            </div>
+            <div class="sf-card-body">
+                <ul class="sf-auth-info-list">
+                    <li>Управление аккаунтами и их сессиями.</li>
+                    <li>Запуск batch-задач через понятные формы.</li>
+                    <li>Контроль рисков, аудит действий и системных ошибок.</li>
+                    <li>Доступ к Swagger и Hangfire для ролей Admin/SuperAdmin.</li>
+                </ul>
+            </div>
+        </section>
+    </div>
+    <div class="col-xl-4 col-lg-6 col-md-8">
+        <section class="sf-card h-100">
+            <div class="sf-card-head">
+                <h2 class="sf-title h4 mb-0">Авторизация</h2>
+                <div class="sf-subtitle">Используйте учётные данные администратора панели.</div>
             </div>
             <div class="sf-card-body">
                 <form asp-action="LoginPost" method="post">
                     <input type="hidden" name="returnUrl" value="@ViewData["ReturnUrl"]" />
+                    <div asp-validation-summary="ModelOnly" class="text-danger mb-2"></div>
                     <div class="mb-3">
                         <label class="form-label" asp-for="Email"></label>
-                        <input class="form-control" asp-for="Email" />
+                        <input class="form-control" asp-for="Email" autocomplete="username" />
                         <span class="text-danger" asp-validation-for="Email"></span>
                     </div>
                     <div class="mb-3">
                         <label class="form-label" asp-for="Password"></label>
-                        <input type="password" class="form-control" asp-for="Password" />
+                        <input type="password" class="form-control" asp-for="Password" autocomplete="current-password" />
                         <span class="text-danger" asp-validation-for="Password"></span>
                     </div>
                     <div class="form-check mb-3">
@@ -33,3 +56,8 @@
         </section>
     </div>
 </div>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}
