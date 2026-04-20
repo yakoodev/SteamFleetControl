@@ -2,42 +2,115 @@
 @{
     ViewData["Title"] = "Детали задачи";
     var canDownloadSensitiveReport = User.IsInRole("SuperAdmin") || User.IsInRole("Admin");
+    var completed = Model.Job.SuccessCount + Model.Job.FailureCount;
+    var progressPercent = Model.Job.TotalCount <= 0
+        ? 0
+        : Math.Clamp((int)Math.Round(completed * 100d / Model.Job.TotalCount), 0, 100);
+    var payloadEntries = Model.Job.Payload
+        .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+        .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    string JobStatusClass(JobStatus status) => status switch
+    {
+        JobStatus.Completed => "sf-badge-owned",
+        JobStatus.Running => "sf-badge-family",
+        JobStatus.Canceled => "sf-badge-muted",
+        JobStatus.Failed => "sf-badge-danger",
+        _ => "sf-badge-muted"
+    };
+
+    string ItemStatusClass(JobItemStatus status) => status switch
+    {
+        JobItemStatus.Success => "sf-badge-owned",
+        JobItemStatus.Running => "sf-badge-family",
+        JobItemStatus.Recoverable => "sf-badge-family",
+        JobItemStatus.Failed => "sf-badge-danger",
+        JobItemStatus.Canceled => "sf-badge-muted",
+        JobItemStatus.Skipped => "sf-badge-muted",
+        _ => "sf-badge-muted"
+    };
 }
 
 <section class="sf-card mb-3">
     <div class="sf-card-head d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
             <h1 class="sf-title">Задача @Model.Job.Id</h1>
-            <div class="sf-subtitle">Тип: @Model.Job.Type | Статус: @Model.Job.Status</div>
+            <div class="sf-subtitle">Тип: @Model.Job.Type</div>
+            <div class="sf-subtitle">Создана: @Model.Job.CreatedAt.ToString("g") • Автор: @(Model.Job.CreatedBy ?? "system")</div>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+            <span class="sf-badge @JobStatusClass(Model.Job.Status)">@Model.Job.Status</span>
             @if (Model.Job.Status is not JobStatus.Completed and not JobStatus.Canceled and not JobStatus.Failed)
             {
                 <form asp-action="Cancel" asp-route-id="@Model.Job.Id" method="post">
                     <button class="btn sf-btn sf-btn-danger btn-sm" type="submit">Отменить</button>
                 </form>
             }
-            <a asp-action="Index" class="btn sf-btn sf-btn-secondary btn-sm">Назад</a>
+            <a asp-action="Index" class="btn sf-btn sf-btn-secondary btn-sm">К списку</a>
         </div>
     </div>
     <div class="sf-card-body">
         <div class="sf-grid">
-            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Всего</div><div class="sf-kpi-value">@Model.Job.TotalCount</div></div></div>
-            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Успех</div><div class="sf-kpi-value">@Model.Job.SuccessCount</div></div></div>
-            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Ошибки</div><div class="sf-kpi-value">@Model.Job.FailureCount</div></div></div>
-            <div class="sf-col-3"><div class="sf-kpi"><div class="sf-subtitle">Dry-run</div><div class="sf-kpi-value">@Model.Job.DryRun</div></div></div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Всего</div>
+                    <div class="sf-kpi-value">@Model.Job.TotalCount</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Успешно</div>
+                    <div class="sf-kpi-value">@Model.Job.SuccessCount</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">С ошибкой</div>
+                    <div class="sf-kpi-value">@Model.Job.FailureCount</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Dry-run</div>
+                    <div class="sf-kpi-value">@Model.Job.DryRun</div>
+                </div>
+            </div>
+            <div class="sf-col-12">
+                <div class="sf-progress-wrap">
+                    <div class="sf-progress-label">Прогресс: @completed / @Model.Job.TotalCount (@progressPercent%)</div>
+                    <div class="sf-progress">
+                        <div class="sf-progress-bar" style="width: @progressPercent%;"></div>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        @if (payloadEntries.Count > 0)
+        {
+            <div class="sf-job-payload mt-3">
+                <div class="sf-subtitle mb-2">Payload задачи</div>
+                <div class="sf-chip-list">
+                    @foreach (var entry in payloadEntries)
+                    {
+                        <span class="sf-chip"><span class="sf-chip-key">@entry.Key</span><span class="sf-chip-value">@entry.Value</span></span>
+                    }
+                </div>
+            </div>
+        }
     </div>
 </section>
 
 @if (Model.Job.HasSensitiveReport)
 {
     <section class="sf-card mb-3">
-        <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Чувствительный отчёт</h2></div>
+        <div class="sf-card-head">
+            <h2 class="sf-title h5 mb-0">Чувствительный отчёт</h2>
+        </div>
         <div class="sf-card-body">
             @if (Model.Job.SensitiveReportConsumed)
             {
-                <div class="sf-subtitle">Отчёт уже был скачан ранее и больше недоступен.</div>
+                <div class="sf-subtitle">Отчёт уже скачан ранее и повторно недоступен.</div>
             }
             else if (!canDownloadSensitiveReport)
             {
@@ -45,7 +118,7 @@
             }
             else
             {
-                <div class="sf-subtitle mb-2">CSV с plaintext-паролями доступен только один раз.</div>
+                <div class="sf-subtitle mb-2">CSV содержит plaintext-пароли и доступен только 1 раз.</div>
                 <a class="btn sf-btn sf-btn-primary" asp-action="SensitiveReport" asp-route-id="@Model.Job.Id">Скачать одноразовый CSV</a>
             }
         </div>
@@ -53,40 +126,76 @@
 }
 
 <section class="sf-card">
-    <div class="sf-card-head"><h2 class="sf-title h5 mb-0">Per-account результаты</h2></div>
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Результаты по аккаунтам</h2>
+    </div>
     <div class="sf-card-body">
         @if (Model.Items.Count == 0)
         {
-            <div class="sf-empty">По этой задаче нет item-результатов.</div>
+            <div class="sf-empty">По этой задаче пока нет item-результатов.</div>
         }
         else
         {
             <div class="table-responsive">
-                <table class="table table-sm align-middle">
+                <table class="table align-middle table-sm">
                     <thead>
                     <tr>
-                        <th>Account</th>
-                        <th>Status</th>
+                        <th>Аккаунт</th>
+                        <th>Статус</th>
                         <th>Attempt</th>
-                        <th>Reason</th>
-                        <th>Retryable</th>
-                        <th>Error</th>
-                        <th>Started</th>
-                        <th>Finished</th>
+                        <th>Причина</th>
+                        <th>Retry</th>
+                        <th>Время</th>
+                        <th>Детали</th>
                     </tr>
                     </thead>
                     <tbody>
                     @foreach (var item in Model.Items)
                     {
+                        var account = Model.TryGetAccount(item.AccountId);
                         <tr>
-                            <td>@item.AccountId</td>
-                            <td>@item.Status</td>
+                            <td>
+                                @if (account is not null)
+                                {
+                                    <a asp-controller="Accounts" asp-action="Details" asp-route-id="@item.AccountId">@account.LoginName</a>
+                                    <div class="sf-subtitle">@account.DisplayName</div>
+                                    <div class="sf-subtitle">@account.Status</div>
+                                }
+                                else
+                                {
+                                    <span>@item.AccountId</span>
+                                }
+                            </td>
+                            <td><span class="sf-badge @ItemStatusClass(item.Status)">@item.Status</span></td>
                             <td>@item.Attempt</td>
-                            <td>@item.ReasonCode</td>
-                            <td>@item.Retryable</td>
-                            <td>@item.ErrorText</td>
-                            <td>@item.StartedAt?.ToString("g")</td>
-                            <td>@item.FinishedAt?.ToString("g")</td>
+                            <td>@(item.ReasonCode ?? "—")</td>
+                            <td>@(item.Retryable ? "Да" : "Нет")</td>
+                            <td>
+                                <div class="sf-subtitle">Start: @item.StartedAt?.ToString("g")</div>
+                                <div class="sf-subtitle">Finish: @item.FinishedAt?.ToString("g")</div>
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(item.ErrorText))
+                                {
+                                    <div class="sf-inline-error mb-2">@item.ErrorText</div>
+                                }
+                                @if (item.Request.Count > 0 || item.Result.Count > 0)
+                                {
+                                    <details class="sf-advanced-box">
+                                        <summary>Показать request/result</summary>
+                                        @if (item.Request.Count > 0)
+                                        {
+                                            <div class="sf-subtitle mt-2">Request</div>
+                                            <pre class="sf-code-box">@System.Text.Json.JsonSerializer.Serialize(item.Request, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })</pre>
+                                        }
+                                        @if (item.Result.Count > 0)
+                                        {
+                                            <div class="sf-subtitle mt-2">Result</div>
+                                            <pre class="sf-code-box">@System.Text.Json.JsonSerializer.Serialize(item.Result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })</pre>
+                                        }
+                                    </details>
+                                }
+                            </td>
                         </tr>
                     }
                     </tbody>

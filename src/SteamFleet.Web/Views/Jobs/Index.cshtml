@@ -1,47 +1,152 @@
-@model IReadOnlyCollection<JobDto>
+@model JobsIndexViewModel
 @{
     ViewData["Title"] = "Задачи";
+    var jobs = Model.Jobs.ToList();
+    var total = jobs.Count;
+    var running = jobs.Count(x => x.Status == JobStatus.Running);
+    var failed = jobs.Count(x => x.Status == JobStatus.Failed);
+    var completed = jobs.Count(x => x.Status == JobStatus.Completed);
+
+    string StatusBadge(JobStatus status) => status switch
+    {
+        JobStatus.Completed => "sf-badge-owned",
+        JobStatus.Running => "sf-badge-family",
+        JobStatus.Failed => "sf-badge-danger",
+        JobStatus.Canceled => "sf-badge-muted",
+        _ => "sf-badge-muted"
+    };
 }
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <h1 class="sf-title">Очередь задач</h1>
+            <div class="sf-subtitle">Профиль, безопасность, друзья и family-операции в одном месте.</div>
+        </div>
+        <a class="btn sf-btn sf-btn-primary" asp-action="Create">Новая задача</a>
+    </div>
+    <div class="sf-card-body">
+        <div class="sf-grid">
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Всего в выдаче</div>
+                    <div class="sf-kpi-value">@total</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">В работе</div>
+                    <div class="sf-kpi-value">@running</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">Завершены</div>
+                    <div class="sf-kpi-value">@completed</div>
+                </div>
+            </div>
+            <div class="sf-col-3">
+                <div class="sf-kpi">
+                    <div class="sf-subtitle">С ошибкой</div>
+                    <div class="sf-kpi-value">@failed</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="sf-card mb-3">
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Фильтры</h2>
+    </div>
+    <div class="sf-card-body">
+        <form method="get" class="row g-2">
+            <div class="col-xl-3 col-md-6">
+                <label class="form-label" for="type">Тип задачи</label>
+                <select id="type" name="type" class="form-select">
+                    <option value="">Все типы</option>
+                    @foreach (var type in Enum.GetValues<JobType>())
+                    {
+                        var selected = Model.Type == type ? "selected" : null;
+                        <option value="@type" selected="@selected">@type</option>
+                    }
+                </select>
+            </div>
+            <div class="col-xl-3 col-md-6">
+                <label class="form-label" for="status">Статус</label>
+                <select id="status" name="status" class="form-select">
+                    <option value="">Все статусы</option>
+                    @foreach (var status in Enum.GetValues<JobStatus>())
+                    {
+                        var selected = Model.Status == status ? "selected" : null;
+                        <option value="@status" selected="@selected">@status</option>
+                    }
+                </select>
+            </div>
+            <div class="col-xl-4 col-md-6">
+                <label class="form-label" for="query">Поиск</label>
+                <input id="query" name="query" class="form-control" value="@Model.Query" placeholder="ID задачи или createdBy" />
+            </div>
+            <div class="col-xl-2 col-md-6 d-flex align-items-end">
+                <button class="btn sf-btn sf-btn-primary w-100" type="submit">Применить</button>
+            </div>
+        </form>
+    </div>
+</section>
 
 <section class="sf-card">
     <div class="sf-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <div>
-            <h1 class="sf-title">Batch-задачи</h1>
-            <div class="sf-subtitle">Пакетные операции, retry, dry-run, sensitive report для password-change</div>
-        </div>
-        <a class="btn sf-btn sf-btn-primary" asp-action="Create">Создать задачу</a>
+        <h2 class="sf-title h5 mb-0">Список задач</h2>
+        <span class="sf-badge sf-badge-muted">Показано: @total</span>
     </div>
     <div class="sf-card-body">
-        @if (Model.Count == 0)
+        @if (jobs.Count == 0)
         {
-            <div class="sf-empty">Список задач пуст.</div>
+            <div class="sf-empty">Задачи по текущему фильтру не найдены.</div>
         }
         else
         {
             <div class="table-responsive">
-                <table class="table align-middle">
+                <table class="table align-middle table-hover">
                     <thead>
                     <tr>
                         <th>ID</th>
                         <th>Тип</th>
                         <th>Статус</th>
+                        <th>Прогресс</th>
+                        <th>Dry-run</th>
                         <th>Создана</th>
-                        <th>Успех</th>
-                        <th>Ошибки</th>
+                        <th>Автор</th>
                         <th>Отчёт</th>
                         <th></th>
                     </tr>
                     </thead>
                     <tbody>
-                    @foreach (var job in Model)
+                    @foreach (var job in jobs)
                     {
+                        var doneCount = job.SuccessCount + job.FailureCount;
+                        var percent = job.TotalCount <= 0
+                            ? 0
+                            : Math.Clamp((int)Math.Round(doneCount * 100d / job.TotalCount), 0, 100);
                         <tr>
-                            <td>@job.Id</td>
+                            <td class="text-break">@job.Id</td>
                             <td>@job.Type</td>
-                            <td>@job.Status</td>
-                            <td>@job.CreatedAt.ToString("g")</td>
-                            <td>@job.SuccessCount</td>
-                            <td>@job.FailureCount</td>
+                            <td><span class="sf-badge @StatusBadge(job.Status)">@job.Status</span></td>
+                            <td style="min-width: 180px;">
+                                <div class="sf-subtitle mb-1">@doneCount / @job.TotalCount</div>
+                                <div class="sf-mini-progress">
+                                    <div class="sf-mini-progress-bar" style="width: @percent%;"></div>
+                                </div>
+                            </td>
+                            <td>@(job.DryRun ? "Да" : "Нет")</td>
+                            <td>
+                                <div>@job.CreatedAt.ToString("g")</div>
+                                @if (job.FinishedAt is not null)
+                                {
+                                    <div class="sf-subtitle">finish: @job.FinishedAt?.ToString("g")</div>
+                                }
+                            </td>
+                            <td>@(string.IsNullOrWhiteSpace(job.CreatedBy) ? "system" : job.CreatedBy)</td>
                             <td>
                                 @if (job.HasSensitiveReport && !job.SensitiveReportConsumed)
                                 {
@@ -53,10 +158,12 @@
                                 }
                                 else
                                 {
-                                    <span class="sf-subtitle">-</span>
+                                    <span class="sf-subtitle">—</span>
                                 }
                             </td>
-                            <td><a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Details" asp-route-id="@job.Id">Открыть</a></td>
+                            <td>
+                                <a class="btn sf-btn sf-btn-secondary btn-sm" asp-action="Details" asp-route-id="@job.Id">Открыть</a>
+                            </td>
                         </tr>
                     }
                     </tbody>
