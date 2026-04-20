@@ -62,6 +62,7 @@ public sealed class PasswordFamilyAndSensitiveReportTests
         var lines = csv.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal(4, lines.Length);
         Assert.Equal("accountId,login,newPassword,deauthorized", lines[0]);
+        const string allowedGeneratedChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_";
 
         var passwords = new List<string>();
         foreach (var line in lines.Skip(1))
@@ -75,7 +76,10 @@ public sealed class PasswordFamilyAndSensitiveReportTests
             Assert.Contains(nextPassword, char.IsUpper);
             Assert.Contains(nextPassword, char.IsLower);
             Assert.Contains(nextPassword, char.IsDigit);
-            Assert.Contains(nextPassword, c => "!@#$%*_-+=".Contains(c));
+            Assert.Contains(nextPassword, c => "-_".Contains(c));
+            Assert.All(nextPassword, c => Assert.Contains(c, allowedGeneratedChars));
+            Assert.True(char.IsLetterOrDigit(nextPassword[0]));
+            Assert.True(char.IsLetterOrDigit(nextPassword[^1]));
         }
 
         Assert.Equal(passwords.Count, passwords.Distinct(StringComparer.Ordinal).Count());

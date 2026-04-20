@@ -1,6 +1,8 @@
 @model CreateJobFormModel
 @{
     ViewData["Title"] = "Создать задачу";
+    var operationalSettings = ViewData["OperationalSettings"] as SteamFleet.Contracts.Settings.OperationalSafetySettingsDto
+                              ?? new SteamFleet.Contracts.Settings.OperationalSafetySettingsDto();
     var typeHints = new Dictionary<JobType, (string Title, string Description)>
     {
         [JobType.ProfileUpdate] = ("Профиль", "Имя, био, real name, локация, custom URL."),
@@ -57,6 +59,22 @@
                         </button>
                     }
                 </div>
+            </div>
+
+            <div class="sf-col-12">
+                <section class="sf-inline-section">
+                    <div class="sf-inline-section-head">
+                        <h2 class="sf-inline-title">Safe-mode</h2>
+                        <div class="sf-subtitle">Ограничения для снижения риска блокировок и login-штормов.</div>
+                    </div>
+                    <div class="sf-chip-list">
+                        <span class="sf-chip"><span class="sf-chip-key">Включен</span><span class="sf-chip-value">@operationalSettings.SafeModeEnabled</span></span>
+                        <span class="sf-chip"><span class="sf-chip-key">Parallelism по умолчанию</span><span class="sf-chip-value">@operationalSettings.DefaultJobParallelism</span></span>
+                        <span class="sf-chip"><span class="sf-chip-key">Retry по умолчанию</span><span class="sf-chip-value">@operationalSettings.DefaultJobRetryCount</span></span>
+                        <span class="sf-chip"><span class="sf-chip-key">Max sensitive parallelism</span><span class="sf-chip-value">@operationalSettings.MaxSensitiveParallelism</span></span>
+                        <span class="sf-chip"><span class="sf-chip-key">Max sensitive accounts</span><span class="sf-chip-value">@operationalSettings.MaxSensitiveAccountsPerJob</span></span>
+                    </div>
+                </section>
             </div>
 
             <div class="sf-col-12">

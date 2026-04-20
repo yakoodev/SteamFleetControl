@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using QRCoder;
 using SteamFleet.Contracts.Accounts;
 using SteamFleet.Contracts.Enums;
+using SteamFleet.Contracts.Settings;
 using SteamFleet.Contracts.Steam;
 using SteamFleet.Domain.Entities;
 using SteamFleet.Persistence.Helpers;
@@ -22,10 +23,13 @@ public sealed partial class AccountService(
     ISecretCryptoService cryptoService,
     IAuditService auditService,
     IAccountRiskPolicyService? accountRiskPolicyService = null,
-    IAccountOperationLock? accountOperationLock = null) : IAccountService
+    IAccountOperationLock? accountOperationLock = null,
+    IOperationalSettingsService? optionalOperationalSettingsService = null) : IAccountService
 {
     private readonly IAccountRiskPolicyService riskPolicyService = accountRiskPolicyService ?? new AccountRiskPolicyService();
     private readonly IAccountOperationLock operationLock = accountOperationLock ?? new InMemoryAccountOperationLock();
+    private readonly IOperationalSettingsService operationalSettingsService =
+        optionalOperationalSettingsService ?? new OperationalSettingsService(dbContext, auditService);
     private const string PasswordPendingPrefix = "password.change.pending.";
     private const string PasswordPendingRequestIdKey = PasswordPendingPrefix + "requestId";
     private const string PasswordPendingContextKey = PasswordPendingPrefix + "confirmationContext";

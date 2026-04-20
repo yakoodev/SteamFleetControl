@@ -1,0 +1,73 @@
+@model OperationalSettingsFormModel
+@{
+    ViewData["Title"] = "Настройки";
+}
+
+<section class="sf-page-header">
+    <div>
+        <h1 class="sf-page-title">Операционные настройки</h1>
+        <div class="sf-page-subtitle">Управление safe-mode ограничениями для задач и чувствительных действий.</div>
+    </div>
+</section>
+
+<section class="sf-card">
+    <div class="sf-card-head">
+        <h2 class="sf-title h5 mb-0">Параметры безопасности</h2>
+    </div>
+    <div class="sf-card-body">
+        <form asp-action="Save" method="post" class="sf-grid">
+            <div asp-validation-summary="ModelOnly" class="text-danger sf-col-12"></div>
+
+            <div class="sf-col-12">
+                <div class="form-check mb-2">
+                    <input class="form-check-input" asp-for="SafeModeEnabled" />
+                    <label class="form-check-label" asp-for="SafeModeEnabled"></label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" asp-for="BlockManualSensitiveDuringCooldown" />
+                    <label class="form-check-label" asp-for="BlockManualSensitiveDuringCooldown"></label>
+                </div>
+                <div class="form-text mt-2">
+                    При включении блокировки система не даст запускать ручные sensitive-действия на аккаунте во время окна cooldown.
+                </div>
+            </div>
+
+            <div class="sf-col-4">
+                <label class="form-label" asp-for="DefaultJobParallelism"></label>
+                <input class="form-control" asp-for="DefaultJobParallelism" />
+                <span asp-validation-for="DefaultJobParallelism" class="text-danger"></span>
+            </div>
+            <div class="sf-col-4">
+                <label class="form-label" asp-for="DefaultJobRetryCount"></label>
+                <input class="form-control" asp-for="DefaultJobRetryCount" />
+                <span asp-validation-for="DefaultJobRetryCount" class="text-danger"></span>
+            </div>
+            <div class="sf-col-4">
+                <label class="form-label" asp-for="MaxSensitiveParallelism"></label>
+                <input class="form-control" asp-for="MaxSensitiveParallelism" />
+                <span asp-validation-for="MaxSensitiveParallelism" class="text-danger"></span>
+            </div>
+
+            <div class="sf-col-6">
+                <label class="form-label" asp-for="MaxSensitiveAccountsPerJob"></label>
+                <input class="form-control" asp-for="MaxSensitiveAccountsPerJob" />
+                <span asp-validation-for="MaxSensitiveAccountsPerJob" class="text-danger"></span>
+                <div class="form-text">Sensitive batch-операции сверх лимита будут отклоняться на этапе создания задачи.</div>
+            </div>
+
+            <div class="sf-col-12 d-flex gap-2 align-items-center">
+                <button class="btn sf-btn sf-btn-primary" type="submit">Сохранить</button>
+                @if (Model.UpdatedAt is not null)
+                {
+                    <span class="sf-subtitle">Последнее обновление: @Model.UpdatedAt?.ToString("g")</span>
+                }
+            </div>
+        </form>
+    </div>
+</section>
+
+@section Scripts
+{
+    <partial name="_ValidationScriptsPartial" />
+}
+

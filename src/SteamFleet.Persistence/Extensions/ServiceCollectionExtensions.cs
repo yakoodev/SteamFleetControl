@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IAccountRiskPolicyService, AccountRiskPolicyService>();
+        services.AddScoped<IOperationalSettingsService, OperationalSettingsService>();
         services.AddSingleton<IAccountOperationLock, AccountOperationLock>();
         services.AddScoped<IAccountService, AccountService>();
         services.AddScoped<IJobService, JobService>();

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using SteamFleet.Contracts.Accounts;
 using SteamFleet.Contracts.Enums;
 using SteamFleet.Contracts.Jobs;
+using SteamFleet.Contracts.Settings;
 using SteamFleet.Persistence.Helpers;
 using SteamFleet.Persistence.Services;
 using SteamFleet.Web.Models.Forms;
@@ -15,7 +16,11 @@ namespace SteamFleet.Web.Controllers;
 
 [Authorize]
 [Route("jobs")]
-public sealed class JobsController(IJobService jobService, IBackgroundJobClient backgroundJobs, IAccountService accountService) : AppControllerBase
+public sealed class JobsController(
+    IJobService jobService,
+    IBackgroundJobClient backgroundJobs,
+    IAccountService accountService,
+    IOperationalSettingsService operationalSettingsService) : AppControllerBase
 {
     private const int MaxAvatarBytes = 2 * 1024 * 1024;
     private static readonly HttpClient AvatarDownloadClient = CreateAvatarHttpClient();
@@ -60,8 +65,15 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
     [HttpGet("create")]
     public async Task<IActionResult> Create(CancellationToken cancellationToken)
     {
-        var model = new CreateJobFormModel();
+        var settings = await operationalSettingsService.GetAsync(cancellationToken);
+        var model = new CreateJobFormModel
+        {
+            Parallelism = settings.DefaultJobParallelism,
+            RetryCount = settings.DefaultJobRetryCount
+        };
+
         await PopulateOptionsAsync(model, cancellationToken);
+        ViewData["OperationalSettings"] = settings;
         return View(model);
     }
 
@@ -70,11 +82,17 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
     [HttpPost("create")]
     public async Task<IActionResult> CreatePost([FromForm] CreateJobFormModel model, CancellationToken cancellationToken)
     {
+        var settings = await operationalSettingsService.GetAsync(cancellationToken);
+        ViewData["OperationalSettings"] = settings;
+
         if (!ModelState.IsValid)
         {
             await PopulateOptionsAsync(model, cancellationToken);
             return View("Create", model);
         }
+
+        var adjustmentMessages = new List<string>();
+        ApplyOperationalSafetyPolicy(model, settings, adjustmentMessages);
 
         string? avatarBase64 = null;
         if (model.Type == JobType.AvatarUpdate)
@@ -126,10 +144,21 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
             Payload = model.Payload
         };
 
-        var job = await jobService.CreateAsync(request, ActorId, ClientIp, cancellationToken);
-        backgroundJobs.Enqueue<HangfireJobExecutor>(x => x.ExecuteAsync(job.Id, CancellationToken.None));
-        TempData["Success"] = "Задача поставлена в очередь";
-        return RedirectToAction(nameof(Details), new { id = job.Id });
+        try
+        {
+            var job = await jobService.CreateAsync(request, ActorId, ClientIp, cancellationToken);
+            backgroundJobs.Enqueue<HangfireJobExecutor>(x => x.ExecuteAsync(job.Id, CancellationToken.None));
+            TempData["Success"] = adjustmentMessages.Count == 0
+                ? "Задача поставлена в очередь"
+                : $"Задача поставлена в очередь. Safe-mode применил ограничения: {string.Join("; ", adjustmentMessages)}";
+            return RedirectToAction(nameof(Details), new { id = job.Id });
+        }
+        catch (InvalidOperationException ex)
+        {
+            ModelState.AddModelError(string.Empty, ex.Message);
+            await PopulateOptionsAsync(model, cancellationToken);
+            return View("Create", model);
+        }
     }
 
     [HttpGet("{id:guid}")]
@@ -325,6 +354,54 @@ public sealed class JobsController(IJobService jobService, IBackgroundJobClient 
         if (model.FriendsPairs.Count == 0)
         {
             model.FriendsPairs.Add(new CreateJobFormModel.FriendPairFormItem());
+        }
+    }
+
+    private void ApplyOperationalSafetyPolicy(
+        CreateJobFormModel model,
+        OperationalSafetySettingsDto settings,
+        ICollection<string> messages)
+    {
+        if (model.Parallelism <= 0)
+        {
+            model.Parallelism = settings.DefaultJobParallelism;
+            messages.Add($"parallelism установлен по умолчанию: {settings.DefaultJobParallelism}");
+        }
+
+        if (model.RetryCount < 0)
+        {
+            model.RetryCount = settings.DefaultJobRetryCount;
+            messages.Add($"retry установлен по умолчанию: {settings.DefaultJobRetryCount}");
+        }
+
+        model.Parallelism = Math.Clamp(model.Parallelism, 1, 50);
+        model.RetryCount = Math.Clamp(model.RetryCount, 0, 10);
+
+        if (!settings.SafeModeEnabled)
+        {
+            return;
+        }
+
+        if (operationalSettingsService.IsSensitiveJobType(model.Type) &&
+            model.Parallelism > settings.MaxSensitiveParallelism)
+        {
+            messages.Add($"parallelism ограничен до {settings.MaxSensitiveParallelism} для sensitive job");
+            model.Parallelism = settings.MaxSensitiveParallelism;
+        }
+
+        var selectedCount = model.Type switch
+        {
+            JobType.FriendsAddByInvite => model.FriendsPairs.Count(x => x.SourceAccountId is not null && x.TargetAccountId is not null && x.SourceAccountId != x.TargetAccountId),
+            JobType.FriendsConnectFamilyMain => model.FamilyMainAccountId is null ? 0 : 1,
+            _ => model.SelectedAccountIds.Count
+        };
+
+        if (operationalSettingsService.IsSensitiveJobType(model.Type) &&
+            selectedCount > settings.MaxSensitiveAccountsPerJob)
+        {
+            ModelState.AddModelError(
+                nameof(model.SelectedAccountIds),
+                $"Safe-mode limit: для {model.Type} разрешено не более {settings.MaxSensitiveAccountsPerJob} аккаунтов в одном запуске.");
         }
     }
 

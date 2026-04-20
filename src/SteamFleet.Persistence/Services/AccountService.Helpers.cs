@@ -73,30 +73,35 @@ public sealed partial class AccountService
         const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
         const string lower = "abcdefghijkmnopqrstuvwxyz";
         const string digits = "23456789";
-        // Steam password flows behave more reliably with a conservative symbol set.
-        const string special = "!@#$*_-";
-        var all = upper + lower + digits + special;
+        // Steam password change flow is sensitive to certain symbols.
+        // Use conservative symbols and avoid placing them at the edges.
+        const string special = "-_";
+        var alphaNum = upper + lower + digits;
 
-        var chars = new List<char>(length)
-        {
-            upper[RandomNumberGenerator.GetInt32(upper.Length)],
-            lower[RandomNumberGenerator.GetInt32(lower.Length)],
-            digits[RandomNumberGenerator.GetInt32(digits.Length)],
-            special[RandomNumberGenerator.GetInt32(special.Length)]
-        };
+        var password = new char[length];
+        password[0] = alphaNum[RandomNumberGenerator.GetInt32(alphaNum.Length)];
+        password[^1] = alphaNum[RandomNumberGenerator.GetInt32(alphaNum.Length)];
 
-        while (chars.Count < length)
+        var availableSlots = Enumerable.Range(1, length - 2).ToList();
+        static int TakeRandomSlot(List<int> slots)
         {
-            chars.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+            var index = RandomNumberGenerator.GetInt32(slots.Count);
+            var value = slots[index];
+            slots.RemoveAt(index);
+            return value;
         }
 
-        for (var i = chars.Count - 1; i > 0; i--)
+        password[TakeRandomSlot(availableSlots)] = upper[RandomNumberGenerator.GetInt32(upper.Length)];
+        password[TakeRandomSlot(availableSlots)] = lower[RandomNumberGenerator.GetInt32(lower.Length)];
+        password[TakeRandomSlot(availableSlots)] = digits[RandomNumberGenerator.GetInt32(digits.Length)];
+        password[TakeRandomSlot(availableSlots)] = special[RandomNumberGenerator.GetInt32(special.Length)];
+
+        foreach (var slot in availableSlots)
         {
-            var j = RandomNumberGenerator.GetInt32(i + 1);
-            (chars[i], chars[j]) = (chars[j], chars[i]);
+            password[slot] = alphaNum[RandomNumberGenerator.GetInt32(alphaNum.Length)];
         }
 
-        return new string(chars.ToArray());
+        return new string(password);
     }
 
     private async Task ApplyUpsertAsync(SteamAccount account, AccountUpsertRequest request, string actorId, CancellationToken cancellationToken)

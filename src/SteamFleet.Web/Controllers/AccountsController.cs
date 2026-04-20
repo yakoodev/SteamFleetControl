@@ -174,10 +174,21 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/authenticate")]
     public async Task<IActionResult> Authenticate(Guid id, [FromForm] AccountAuthenticateRequest request, CancellationToken cancellationToken)
     {
-        var result = await accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
-        TempData[result.Success ? "Success" : "Error"] = result.Success
-            ? "Steam-авторизация успешна, сессия сохранена."
-            : $"Steam-авторизация не удалась: {result.ErrorMessage}";
+        try
+        {
+            var result = await accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
+            TempData[result.Success ? "Success" : "Error"] = result.Success
+                ? "Steam-авторизация успешна, сессия сохранена."
+                : $"Steam-авторизация не удалась: {result.ErrorMessage}";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Steam-авторизация не удалась: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Steam-авторизация не удалась: {ex.Message}";
+        }
 
         return RedirectToAction(nameof(Details), new { id });
     }
@@ -187,8 +198,22 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/validate")]
     public async Task<IActionResult> ValidateSession(Guid id, CancellationToken cancellationToken)
     {
-        var result = await accountService.ValidateSessionAsync(id, ActorId, ClientIp, cancellationToken);
-        TempData["Success"] = result.IsValid ? "Сессия валидна" : $"Сессия невалидна: {result.Reason}";
+        try
+        {
+            var result = await accountService.ValidateSessionAsync(id, ActorId, ClientIp, cancellationToken);
+            TempData[result.IsValid ? "Success" : "Error"] = result.IsValid
+                ? "Сессия валидна"
+                : $"Сессия невалидна: {result.Reason}";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Проверка сессии не удалась: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Проверка сессии не удалась: {ex.Message}";
+        }
+
         return RedirectToAction(nameof(Details), new { id });
     }
 
@@ -197,8 +222,20 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/refresh")]
     public async Task<IActionResult> RefreshSession(Guid id, CancellationToken cancellationToken)
     {
-        await accountService.RefreshSessionAsync(id, ActorId, ClientIp, cancellationToken);
-        TempData["Success"] = "Сессия обновлена";
+        try
+        {
+            await accountService.RefreshSessionAsync(id, ActorId, ClientIp, cancellationToken);
+            TempData["Success"] = "Сессия обновлена";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Обновление сессии не удалось: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Обновление сессии не удалось: {ex.Message}";
+        }
+
         return RedirectToAction(nameof(Details), new { id });
     }
 
@@ -269,10 +306,21 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/sessions/deauthorize")]
     public async Task<IActionResult> DeauthorizeSessions(Guid id, CancellationToken cancellationToken)
     {
-        var result = await accountService.DeauthorizeAllSessionsAsync(id, ActorId, ClientIp, cancellationToken);
-        TempData[result.Success ? "Success" : "Error"] = result.Success
-            ? "Все сессии завершены. Аккаунт переведен в RequiresRelogin."
-            : $"Не удалось завершить сессии: {result.ErrorMessage}";
+        try
+        {
+            var result = await accountService.DeauthorizeAllSessionsAsync(id, ActorId, ClientIp, cancellationToken);
+            TempData[result.Success ? "Success" : "Error"] = result.Success
+                ? "Все сессии завершены. Аккаунт переведен в RequiresRelogin."
+                : $"Не удалось завершить сессии: {result.ErrorMessage}";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось завершить сессии: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось завершить сессии: {ex.Message}";
+        }
 
         return RedirectToAction(nameof(Details), new { id });
     }
@@ -376,8 +424,20 @@ public sealed class AccountsController(IAccountService accountService) : AppCont
     [HttpPost("{id:guid}/friends/refresh")]
     public async Task<IActionResult> RefreshFriends(Guid id, CancellationToken cancellationToken)
     {
-        var snapshot = await accountService.RefreshFriendsAsync(id, ActorId, ClientIp, cancellationToken);
-        TempData["Success"] = $"Список друзей обновлён: {snapshot.Friends.Count}.";
+        try
+        {
+            var snapshot = await accountService.RefreshFriendsAsync(id, ActorId, ClientIp, cancellationToken);
+            TempData["Success"] = $"Список друзей обновлён: {snapshot.Friends.Count}.";
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось обновить друзей: {ex.Message} (код: {ex.ReasonCode ?? SteamReasonCodes.Unknown})";
+        }
+        catch (InvalidOperationException ex)
+        {
+            TempData["Error"] = $"Не удалось обновить друзей: {ex.Message}";
+        }
+
         return RedirectToAction(nameof(Details), new { id, tab = "friends" });
     }
 

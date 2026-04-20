@@ -151,7 +151,20 @@ public sealed partial class AccountService
         bool automated,
         CancellationToken cancellationToken)
     {
+        var operationalSettings = await operationalSettingsService.GetAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
+        if (!automated &&
+            operationalSettings.SafeModeEnabled &&
+            operationalSettings.BlockManualSensitiveDuringCooldown &&
+            account.AutoRetryAfter is not null &&
+            account.AutoRetryAfter > now)
+        {
+            throw new SteamGatewayOperationException(
+                $"Safe-mode: аккаунт в cooldown до {account.AutoRetryAfter:O}. Повторите позже, чтобы снизить риск блокировки.",
+                SteamReasonCodes.CooldownActive,
+                retryable: true);
+        }
+
         var precheck = riskPolicyService.EvaluateBeforeOperation(account, automated, now);
         if (precheck.Delay > TimeSpan.Zero)
         {

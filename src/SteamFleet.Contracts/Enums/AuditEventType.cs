@@ -31,5 +31,6 @@ public enum AuditEventType
     JobCompleted,
     JobCanceled,
     JobItemFailed,
+    SystemSettingsUpdated,
     SystemError
 }

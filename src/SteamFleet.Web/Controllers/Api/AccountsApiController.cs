@@ -77,11 +77,25 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/authenticate")]
-    public Task<SteamFleet.Contracts.Steam.SteamAuthResult> Authenticate(
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamAuthResult>> Authenticate(
         Guid id,
         [FromBody] AccountAuthenticateRequest request,
         CancellationToken cancellationToken)
-        => accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
+    {
+        try
+        {
+            var result = await accountService.AuthenticateAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
@@ -151,40 +165,110 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/authenticate/qr/start")]
-    public Task<SteamFleet.Contracts.Steam.SteamQrAuthStartResult> StartQrAuth(
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamQrAuthStartResult>> StartQrAuth(
         Guid id,
         CancellationToken cancellationToken)
-        => accountService.StartQrAuthenticationAsync(id, ActorId, ClientIp, cancellationToken);
+    {
+        try
+        {
+            var result = await accountService.StartQrAuthenticationAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpGet("{id:guid}/authenticate/qr/{flowId:guid}")]
-    public Task<SteamFleet.Contracts.Steam.SteamQrAuthPollResult> PollQrAuth(
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamQrAuthPollResult>> PollQrAuth(
         Guid id,
         Guid flowId,
         CancellationToken cancellationToken)
-        => accountService.PollQrAuthenticationAsync(id, flowId, ActorId, ClientIp, cancellationToken);
+    {
+        try
+        {
+            var result = await accountService.PollQrAuthenticationAsync(id, flowId, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/authenticate/qr/{flowId:guid}/cancel")]
-    public Task CancelQrAuth(
+    public async Task<IActionResult> CancelQrAuth(
         Guid id,
         Guid flowId,
         CancellationToken cancellationToken)
-        => accountService.CancelQrAuthenticationAsync(id, flowId, ActorId, ClientIp, cancellationToken);
+    {
+        try
+        {
+            await accountService.CancelQrAuthenticationAsync(id, flowId, ActorId, ClientIp, cancellationToken);
+            return NoContent();
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/validate-session")]
-    public Task<SteamFleet.Contracts.Steam.SteamSessionValidationResult> ValidateSession(Guid id, CancellationToken cancellationToken)
-        => accountService.ValidateSessionAsync(id, ActorId, ClientIp, cancellationToken);
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamSessionValidationResult>> ValidateSession(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.ValidateSessionAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/refresh-session")]
-    public Task<SteamFleet.Contracts.Steam.SteamSessionInfo> RefreshSession(Guid id, CancellationToken cancellationToken)
-        => accountService.RefreshSessionAsync(id, ActorId, ClientIp, cancellationToken);
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamSessionInfo>> RefreshSession(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.RefreshSessionAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
@@ -222,8 +306,22 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/sessions/deauthorize")]
-    public Task<SteamFleet.Contracts.Steam.SteamOperationResult> DeauthorizeSessions(Guid id, CancellationToken cancellationToken)
-        => accountService.DeauthorizeAllSessionsAsync(id, ActorId, ClientIp, cancellationToken);
+    public async Task<ActionResult<SteamFleet.Contracts.Steam.SteamOperationResult>> DeauthorizeSessions(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.DeauthorizeAllSessionsAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
@@ -479,8 +577,22 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/friends/refresh")]
-    public Task<AccountFriendsSnapshotDto> RefreshFriends(Guid id, CancellationToken cancellationToken)
-        => accountService.RefreshFriendsAsync(id, ActorId, ClientIp, cancellationToken);
+    public async Task<ActionResult<AccountFriendsSnapshotDto>> RefreshFriends(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.RefreshFriendsAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
 
     [HttpGet("{id:guid}/friends")]
     public Task<AccountFriendsSnapshotDto> GetFriends(Guid id, CancellationToken cancellationToken)

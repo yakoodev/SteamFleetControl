@@ -19,6 +19,7 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
     public DbSet<JobSensitiveReport> JobSensitiveReports => Set<JobSensitiveReport>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SteamAccountGame> SteamAccountGames => Set<SteamAccountGame>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -175,6 +176,14 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
             entity.Property(x => x.PayloadJson).HasColumnType("jsonb").HasDefaultValue("{}");
             entity.HasIndex(x => x.EventType);
             entity.HasIndex(x => x.CreatedAt);
+        });
+
+        builder.Entity<SystemSetting>(entity =>
+        {
+            entity.ToTable("system_settings");
+            entity.Property(x => x.Key).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ValueJson).HasColumnType("jsonb").HasDefaultValue("{}");
+            entity.HasIndex(x => x.Key).IsUnique();
         });
 
         builder.Entity<AppUser>().ToTable("users");

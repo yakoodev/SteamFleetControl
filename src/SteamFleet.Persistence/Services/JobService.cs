@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using SteamFleet.Contracts.Enums;
 using SteamFleet.Contracts.Jobs;
+using SteamFleet.Contracts.Settings;
 using SteamFleet.Contracts.Steam;
 using SteamFleet.Domain.Entities;
 using SteamFleet.Persistence.Helpers;
@@ -18,12 +19,16 @@ public sealed partial class JobService(
     ISecretCryptoService cryptoService,
     IAuditService auditService,
     IAccountRiskPolicyService? accountRiskPolicyService = null,
-    IAccountOperationLock? accountOperationLock = null) : IJobService
+    IAccountOperationLock? accountOperationLock = null,
+    IOperationalSettingsService? optionalOperationalSettingsService = null) : IJobService
 {
     private readonly IAccountRiskPolicyService riskPolicyService = accountRiskPolicyService ?? new AccountRiskPolicyService();
     private readonly IAccountOperationLock operationLock = accountOperationLock ?? new InMemoryAccountOperationLock();
+    private readonly IOperationalSettingsService operationalSettingsService =
+        optionalOperationalSettingsService ?? new OperationalSettingsService(dbContext, auditService);
     public async Task<JobDto> CreateAsync(JobCreateRequest request, string actorId, string? ip, CancellationToken cancellationToken = default)
     {
+        var operationalSettings = await operationalSettingsService.GetAsync(cancellationToken);
         var payload = new Dictionary<string, string>(request.Payload, StringComparer.OrdinalIgnoreCase);
         if (request.Type == JobType.PasswordChange &&
             payload.TryGetValue("newPassword", out var plaintextPassword) &&
@@ -37,6 +42,8 @@ public sealed partial class JobService(
         var payloadJson = JsonSerialization.SerializeDictionary(payload);
         List<FleetJobItem> jobItems;
         int totalCount;
+        var effectiveParallelism = ResolveParallelism(request, operationalSettings);
+        var effectiveRetryCount = ResolveRetryCount(request, operationalSettings);
 
         if (request.Type == JobType.FriendsAddByInvite)
         {
@@ -179,6 +186,14 @@ public sealed partial class JobService(
             totalCount = accounts.Count;
         }
 
+        if (operationalSettings.SafeModeEnabled &&
+            operationalSettingsService.IsSensitiveJobType(request.Type) &&
+            totalCount > operationalSettings.MaxSensitiveAccountsPerJob)
+        {
+            throw new InvalidOperationException(
+                $"Safe-mode limit: для {request.Type} разрешено не более {operationalSettings.MaxSensitiveAccountsPerJob} аккаунтов за одну задачу. Разбейте запуск на несколько batch.");
+        }
+
         var job = new FleetJob
         {
             Type = request.Type,
@@ -186,8 +201,8 @@ public sealed partial class JobService(
             CreatedBy = actorId,
             TotalCount = totalCount,
             DryRun = request.DryRun,
-            Parallelism = Math.Clamp(request.Parallelism, 1, 50),
-            RetryCount = Math.Clamp(request.RetryCount, 0, 10),
+            Parallelism = effectiveParallelism,
+            RetryCount = effectiveRetryCount,
             PayloadJson = payloadJson,
             Items = jobItems
         };
@@ -210,6 +225,30 @@ public sealed partial class JobService(
             cancellationToken);
 
         return MapJob(job);
+    }
+
+    private int ResolveParallelism(JobCreateRequest request, OperationalSafetySettingsDto settings)
+    {
+        var baseValue = request.Parallelism <= 0
+            ? settings.DefaultJobParallelism
+            : request.Parallelism;
+
+        var normalized = Math.Clamp(baseValue, 1, 50);
+        if (settings.SafeModeEnabled && operationalSettingsService.IsSensitiveJobType(request.Type))
+        {
+            normalized = Math.Min(normalized, settings.MaxSensitiveParallelism);
+        }
+
+        return normalized;
+    }
+
+    private static int ResolveRetryCount(JobCreateRequest request, OperationalSafetySettingsDto settings)
+    {
+        var baseValue = request.RetryCount < 0
+            ? settings.DefaultJobRetryCount
+            : request.RetryCount;
+
+        return Math.Clamp(baseValue, 0, 10);
     }
 
     public async Task<JobDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

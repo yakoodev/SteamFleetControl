@@ -35,6 +35,7 @@
             <a class="@NavClass("Audit", "Index")" asp-controller="Audit" asp-action="Index">Аудит</a>
             @if (canUseAdminTools)
             {
+                <a class="@NavClass("Settings", "Index")" asp-controller="Settings" asp-action="Index">Настройки</a>
                 <a class="sf-nav-link" href="/swagger" target="_blank" rel="noopener">Swagger</a>
                 <a class="sf-nav-link" href="/hangfire" target="_blank" rel="noopener">Hangfire</a>
             }
