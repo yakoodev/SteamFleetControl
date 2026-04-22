@@ -227,6 +227,52 @@
                 <form asp-action="DeauthorizeSessions" asp-route-id="@Model.Id" method="post">
                     <button class="btn sf-btn sf-btn-danger" type="submit">Завершить все сессии через Steam Guard</button>
                 </form>
+
+                <hr class="border-secondary my-3" />
+                <div class="sf-subtitle mb-2">Steam Guard мастер (SDA-паритет)</div>
+                <div id="guardWizardStatus" class="alert alert-secondary mb-2">Готово к запуску линковки.</div>
+                <div class="row g-2 mb-2">
+                    <div class="col-8">
+                        <input id="guardPhoneInput" class="form-control" placeholder="+79991234567 (для шага phone/email)" />
+                    </div>
+                    <div class="col-4 d-grid">
+                        <button id="guardLinkStartBtn" type="button" class="btn sf-btn sf-btn-primary">Старт линковки</button>
+                    </div>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-12 d-grid">
+                        <button id="guardPhoneSubmitBtn" type="button" class="btn sf-btn sf-btn-secondary">Отправить телефон (шаг phone/email)</button>
+                    </div>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-8">
+                        <input id="guardSmsInput" class="form-control" placeholder="SMS код для finalize" />
+                    </div>
+                    <div class="col-4 d-grid">
+                        <button id="guardLinkFinalizeBtn" type="button" class="btn sf-btn sf-btn-secondary">Финализировать</button>
+                    </div>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <select id="guardRemoveScheme" class="form-select">
+                            <option value="1">scheme=1 (на email-коды)</option>
+                            <option value="2">scheme=2 (полное удаление)</option>
+                        </select>
+                    </div>
+                    <div class="col-6 d-grid">
+                        <button id="guardRemoveBtn" type="button" class="btn sf-btn sf-btn-danger">Удалить аутентификатор</button>
+                    </div>
+                </div>
+                <pre id="guardWizardPayload" class="bg-black text-light p-2 rounded small mb-3" style="min-height: 96px;">{}</pre>
+
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="sf-subtitle mb-0">Mobile confirmations</div>
+                    <div class="d-flex gap-2">
+                        <button id="guardConfRefreshBtn" type="button" class="btn sf-btn sf-btn-secondary btn-sm">Обновить</button>
+                        <button id="guardConfAcceptAllBtn" type="button" class="btn sf-btn sf-btn-primary btn-sm">Принять все</button>
+                    </div>
+                </div>
+                <div id="guardConfList" class="d-flex flex-column gap-2"></div>
             </div>
         </div>
     </div>
@@ -679,6 +725,227 @@
 
             const modal = new bootstrap.Modal(modalEl);
             modal.show();
+        })();
+
+        (() => {
+            const accountId = "@Model.Id";
+            const statusEl = document.getElementById("guardWizardStatus");
+            const payloadEl = document.getElementById("guardWizardPayload");
+            const phoneInput = document.getElementById("guardPhoneInput");
+            const smsInput = document.getElementById("guardSmsInput");
+            const linkStartBtn = document.getElementById("guardLinkStartBtn");
+            const phoneSubmitBtn = document.getElementById("guardPhoneSubmitBtn");
+            const linkFinalizeBtn = document.getElementById("guardLinkFinalizeBtn");
+            const removeBtn = document.getElementById("guardRemoveBtn");
+            const removeScheme = document.getElementById("guardRemoveScheme");
+            const confListEl = document.getElementById("guardConfList");
+            const confRefreshBtn = document.getElementById("guardConfRefreshBtn");
+            const confAcceptAllBtn = document.getElementById("guardConfAcceptAllBtn");
+
+            if (!statusEl || !payloadEl || !linkStartBtn || !phoneSubmitBtn || !linkFinalizeBtn || !removeBtn || !confListEl || !confRefreshBtn || !confAcceptAllBtn) {
+                return;
+            }
+
+            function setStatus(text, level) {
+                statusEl.className = "alert mb-2";
+                statusEl.classList.add(level || "alert-secondary");
+                statusEl.textContent = text;
+            }
+
+            function setPayload(payload) {
+                payloadEl.textContent = JSON.stringify(payload || {}, null, 2);
+            }
+
+            async function api(url, options) {
+                const response = await fetch(url, {
+                    credentials: "include",
+                    headers: {
+                        "Content-Type": "application/json",
+                        ...(options && options.headers ? options.headers : {})
+                    },
+                    ...options
+                });
+                const contentType = response.headers.get("content-type") || "";
+                const data = contentType.includes("application/json")
+                    ? await response.json()
+                    : { errorMessage: await response.text() };
+
+                if (!response.ok) {
+                    throw new Error(data.errorMessage || data.message || `HTTP ${response.status}`);
+                }
+
+                return data;
+            }
+
+            function renderConfirmations(items) {
+                confListEl.innerHTML = "";
+                if (!items || items.length === 0) {
+                    confListEl.innerHTML = '<div class="sf-subtitle">Подтверждения не найдены.</div>';
+                    return;
+                }
+
+                for (const conf of items) {
+                    const card = document.createElement("div");
+                    card.className = "border rounded p-2 bg-dark text-light";
+
+                    const title = document.createElement("div");
+                    title.className = "fw-semibold";
+                    title.textContent = `${conf.headline || "Без заголовка"} [${conf.type || "Unknown"}]`;
+                    card.appendChild(title);
+
+                    const summary = document.createElement("div");
+                    summary.className = "small text-secondary";
+                    summary.textContent = (conf.summary || []).join(" | ");
+                    card.appendChild(summary);
+
+                    const buttons = document.createElement("div");
+                    buttons.className = "d-flex gap-2 mt-2";
+                    buttons.innerHTML = `
+                        <button type="button" class="btn sf-btn sf-btn-primary btn-sm">Accept</button>
+                        <button type="button" class="btn sf-btn sf-btn-secondary btn-sm">Deny</button>
+                    `;
+
+                    const acceptBtn = buttons.children[0];
+                    const denyBtn = buttons.children[1];
+
+                    acceptBtn.addEventListener("click", async () => {
+                        try {
+                            setStatus("Отправляем accept...", "alert-info");
+                            const result = await api(`/api/accounts/${accountId}/guard/confirmations/${conf.id}/${conf.key}/accept`, { method: "POST", body: "{}" });
+                            setPayload(result);
+                            setStatus("Подтверждение принято.", "alert-success");
+                            await refreshConfirmations();
+                        } catch (e) {
+                            setStatus(`Ошибка accept: ${e.message}`, "alert-danger");
+                        }
+                    });
+
+                    denyBtn.addEventListener("click", async () => {
+                        try {
+                            setStatus("Отправляем deny...", "alert-info");
+                            const result = await api(`/api/accounts/${accountId}/guard/confirmations/${conf.id}/${conf.key}/deny`, { method: "POST", body: "{}" });
+                            setPayload(result);
+                            setStatus("Подтверждение отклонено.", "alert-warning");
+                            await refreshConfirmations();
+                        } catch (e) {
+                            setStatus(`Ошибка deny: ${e.message}`, "alert-danger");
+                        }
+                    });
+
+                    card.appendChild(buttons);
+                    confListEl.appendChild(card);
+                }
+            }
+
+            async function refreshConfirmations() {
+                try {
+                    setStatus("Загружаем mobile confirmations...", "alert-info");
+                    const data = await api(`/api/accounts/${accountId}/guard/confirmations`, { method: "GET" });
+                    setPayload(data);
+                    renderConfirmations(data.confirmations || []);
+                    setStatus(`Получено подтверждений: ${(data.confirmations || []).length}`, "alert-secondary");
+                } catch (e) {
+                    setStatus(`Не удалось загрузить confirmations: ${e.message}`, "alert-danger");
+                }
+            }
+
+            linkStartBtn.addEventListener("click", async () => {
+                try {
+                    setStatus("Запускаем линковку Steam Guard...", "alert-info");
+                    const payload = {
+                        phoneNumber: phoneInput && phoneInput.value ? phoneInput.value.trim() : null,
+                        phoneCountryCode: "7"
+                    };
+                    const data = await api(`/api/accounts/${accountId}/guard/link/start`, {
+                        method: "POST",
+                        body: JSON.stringify(payload)
+                    });
+                    setPayload(data);
+                    setStatus(`Шаг: ${data.step || "Unknown"}`, data.success ? "alert-success" : "alert-warning");
+                } catch (e) {
+                    setStatus(`Линковка не запущена: ${e.message}`, "alert-danger");
+                }
+            });
+
+            phoneSubmitBtn.addEventListener("click", async () => {
+                try {
+                    const phoneNumber = phoneInput && phoneInput.value ? phoneInput.value.trim() : "";
+                    if (!phoneNumber) {
+                        setStatus("Введите телефон перед отправкой.", "alert-warning");
+                        return;
+                    }
+
+                    setStatus("Отправляем телефон для шага email-confirmation...", "alert-info");
+                    const data = await api(`/api/accounts/${accountId}/guard/link/phone`, {
+                        method: "POST",
+                        body: JSON.stringify({ phoneNumber, phoneCountryCode: "7" })
+                    });
+                    setPayload(data);
+                    setStatus(`Шаг: ${data.step || "Unknown"}`, data.success ? "alert-success" : "alert-warning");
+                } catch (e) {
+                    setStatus(`Не удалось отправить телефон: ${e.message}`, "alert-danger");
+                }
+            });
+
+            linkFinalizeBtn.addEventListener("click", async () => {
+                try {
+                    const smsCode = smsInput && smsInput.value ? smsInput.value.trim() : "";
+                    if (!smsCode) {
+                        setStatus("Введите SMS-код перед финализацией.", "alert-warning");
+                        return;
+                    }
+
+                    setStatus("Финализируем линковку...", "alert-info");
+                    const data = await api(`/api/accounts/${accountId}/guard/link/finalize`, {
+                        method: "POST",
+                        body: JSON.stringify({ smsCode })
+                    });
+                    setPayload(data);
+                    setStatus(`Finalize: ${data.step || "Unknown"}`, data.success ? "alert-success" : "alert-warning");
+                } catch (e) {
+                    setStatus(`Финализация не удалась: ${e.message}`, "alert-danger");
+                }
+            });
+
+            removeBtn.addEventListener("click", async () => {
+                try {
+                    const scheme = parseInt(removeScheme && removeScheme.value ? removeScheme.value : "1", 10);
+                    setStatus("Удаляем аутентификатор...", "alert-info");
+                    const data = await api(`/api/accounts/${accountId}/guard/remove`, {
+                        method: "POST",
+                        body: JSON.stringify({ scheme })
+                    });
+                    setPayload(data);
+                    setStatus("Аутентификатор удалён.", "alert-success");
+                } catch (e) {
+                    setStatus(`Не удалось удалить аутентификатор: ${e.message}`, "alert-danger");
+                }
+            });
+
+            confRefreshBtn.addEventListener("click", refreshConfirmations);
+            confAcceptAllBtn.addEventListener("click", async () => {
+                try {
+                    const current = await api(`/api/accounts/${accountId}/guard/confirmations`, { method: "GET" });
+                    const refs = (current.confirmations || []).map(x => ({ id: x.id, key: x.key }));
+                    if (refs.length === 0) {
+                        setStatus("Нет подтверждений для batch-accept.", "alert-secondary");
+                        return;
+                    }
+
+                    setStatus(`Batch accept (${refs.length})...`, "alert-info");
+                    const result = await api(`/api/accounts/${accountId}/guard/confirmations/accept-batch`, {
+                        method: "POST",
+                        body: JSON.stringify({ confirmations: refs })
+                    });
+                    setPayload(result);
+                    setStatus("Batch-accept выполнен.", "alert-success");
+                    await refreshConfirmations();
+                } catch (e) {
+                    setStatus(`Batch-accept ошибка: ${e.message}`, "alert-danger");
+                }
+            });
+
+            refreshConfirmations();
         })();
     </script>
 }

@@ -90,6 +90,76 @@ public sealed class SteamOperationResult
     public Dictionary<string, string> Data { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+public enum SteamGuardConfirmationType
+{
+    Unknown = 0,
+    Trade = 2,
+    MarketListing = 3,
+    FeatureOptOut = 4,
+    PhoneNumberChange = 5,
+    AccountRecovery = 6
+}
+
+public sealed class SteamGuardConfirmation
+{
+    public ulong Id { get; set; }
+    public ulong Key { get; set; }
+    public ulong CreatorId { get; set; }
+    public string? Headline { get; set; }
+    public List<string> Summary { get; set; } = [];
+    public string? AcceptText { get; set; }
+    public string? CancelText { get; set; }
+    public string? IconUrl { get; set; }
+    public SteamGuardConfirmationType Type { get; set; } = SteamGuardConfirmationType.Unknown;
+}
+
+public sealed class SteamGuardConfirmationsResult
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string? ReasonCode { get; set; }
+    public bool Retryable { get; set; }
+    public bool NeedAuthentication { get; set; }
+    public DateTimeOffset SyncedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<SteamGuardConfirmation> Confirmations { get; set; } = [];
+}
+
+public sealed class SteamGuardConfirmationRef
+{
+    public ulong Id { get; set; }
+    public ulong Key { get; set; }
+}
+
+public enum SteamGuardLinkStep
+{
+    None = 0,
+    NeedPhoneNumber = 1,
+    NeedEmailConfirmation = 2,
+    NeedSmsCode = 3,
+    Completed = 4,
+    Failed = 5
+}
+
+public sealed class SteamGuardLinkState
+{
+    public SteamGuardLinkStep Step { get; set; } = SteamGuardLinkStep.None;
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string? ReasonCode { get; set; }
+    public bool Retryable { get; set; }
+    public bool FullyEnrolled { get; set; }
+    public string? PhoneNumberHint { get; set; }
+    public string? ConfirmationEmailAddress { get; set; }
+    public string? DeviceId { get; set; }
+    public string? SharedSecret { get; set; }
+    public string? IdentitySecret { get; set; }
+    public string? RevocationCode { get; set; }
+    public string? SerialNumber { get; set; }
+    public string? TokenGid { get; set; }
+    public string? Uri { get; set; }
+    public string? RecoveryPayload { get; set; }
+}
+
 public sealed class SteamOwnedGame
 {
     public int AppId { get; set; }
@@ -174,6 +244,51 @@ public interface ISteamAccountGateway
         string? confirmationContext = null,
         CancellationToken cancellationToken = default);
     Task<SteamOperationResult> DeauthorizeAllSessionsAsync(string sessionPayload, CancellationToken cancellationToken = default);
+    Task<SteamGuardConfirmationsResult> GetConfirmationsAsync(
+        string sessionPayload,
+        string identitySecret,
+        string deviceId,
+        CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptConfirmationAsync(
+        string sessionPayload,
+        string identitySecret,
+        string deviceId,
+        ulong confirmationId,
+        ulong confirmationKey,
+        CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> DenyConfirmationAsync(
+        string sessionPayload,
+        string identitySecret,
+        string deviceId,
+        ulong confirmationId,
+        ulong confirmationKey,
+        CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptConfirmationsBatchAsync(
+        string sessionPayload,
+        string identitySecret,
+        string deviceId,
+        IReadOnlyCollection<SteamGuardConfirmationRef> confirmations,
+        CancellationToken cancellationToken = default);
+    Task<SteamGuardLinkState> StartAuthenticatorLinkAsync(
+        string sessionPayload,
+        string? phoneNumber = null,
+        string? phoneCountryCode = null,
+        CancellationToken cancellationToken = default);
+    Task<SteamGuardLinkState> ProvidePhoneForLinkAsync(
+        string sessionPayload,
+        string phoneNumber,
+        string? phoneCountryCode = null,
+        CancellationToken cancellationToken = default);
+    Task<SteamGuardLinkState> FinalizeAuthenticatorLinkAsync(
+        string sessionPayload,
+        string sharedSecret,
+        string smsCode,
+        CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> RemoveAuthenticatorAsync(
+        string sessionPayload,
+        string revocationCode,
+        int scheme = 1,
+        CancellationToken cancellationToken = default);
     Task<SteamOwnedGamesSnapshot> GetOwnedGamesSnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default);
     Task<SteamFriendInviteLink> GetFriendInviteLinkAsync(string sessionPayload, CancellationToken cancellationToken = default);
     Task<SteamOperationResult> AcceptFriendInviteAsync(string sessionPayload, string inviteUrl, CancellationToken cancellationToken = default);

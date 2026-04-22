@@ -439,6 +439,89 @@ public sealed class PasswordFamilyAndSensitiveReportTests
                     : new Dictionary<string, string>()
             });
 
+        public Task<SteamGuardConfirmationsResult> GetConfirmationsAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardConfirmationsResult
+            {
+                Success = true,
+                Confirmations = []
+            });
+
+        public Task<SteamOperationResult> AcceptConfirmationAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            ulong confirmationId,
+            ulong confirmationKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamOperationResult> DenyConfirmationAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            ulong confirmationId,
+            ulong confirmationKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamOperationResult> AcceptConfirmationsBatchAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            IReadOnlyCollection<SteamGuardConfirmationRef> confirmations,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamGuardLinkState> StartAuthenticatorLinkAsync(
+            string sessionPayload,
+            string? phoneNumber = null,
+            string? phoneCountryCode = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.NeedSmsCode,
+                SharedSecret = "shared",
+                IdentitySecret = "identity",
+                DeviceId = "android:test",
+                RevocationCode = "R12345"
+            });
+
+        public Task<SteamGuardLinkState> ProvidePhoneForLinkAsync(
+            string sessionPayload,
+            string phoneNumber,
+            string? phoneCountryCode = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.NeedEmailConfirmation,
+                PhoneNumberHint = phoneNumber
+            });
+
+        public Task<SteamGuardLinkState> FinalizeAuthenticatorLinkAsync(
+            string sessionPayload,
+            string sharedSecret,
+            string smsCode,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.Completed,
+                FullyEnrolled = true
+            });
+
+        public Task<SteamOperationResult> RemoveAuthenticatorAsync(
+            string sessionPayload,
+            string revocationCode,
+            int scheme = 1,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
         public Task<SteamOwnedGamesSnapshot> GetOwnedGamesSnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default)
             => Task.FromResult(new SteamOwnedGamesSnapshot
             {

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Mime;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using SteamFleet.Contracts.Steam;
 using SteamKit2;
 using SteamKit2.Authentication;
@@ -249,8 +251,17 @@ public sealed partial class SteamKitGateway
     private static class SteamGuardCodeGenerator
     {
         private const string CodeChars = "23456789BCDFGHJKMNPQRTVWXY";
+        private static readonly object TimeSyncLock = new();
+        private static DateTimeOffset _lastSyncAtUtc = DateTimeOffset.MinValue;
+        private static long _timeOffsetSeconds;
 
-        public static string Generate(string sharedSecretBase64)
+        public static async Task<string> GenerateAsync(string sharedSecretBase64, bool forceResync = false)
+        {
+            var unixTime = await GetSteamUnixTimeAsync(forceResync).ConfigureAwait(false);
+            return GenerateForUnixTime(sharedSecretBase64, unixTime);
+        }
+
+        private static string GenerateForUnixTime(string sharedSecretBase64, long unixTime)
         {
             if (string.IsNullOrWhiteSpace(sharedSecretBase64))
             {
@@ -267,7 +278,6 @@ public sealed partial class SteamKitGateway
                 throw new InvalidOperationException("Shared secret must be valid base64.", ex);
             }
 
-            var unixTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var timeSlice = unixTime / 30;
             var challenge = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(timeSlice));
 
@@ -281,7 +291,7 @@ public sealed partial class SteamKitGateway
                 ((digest[offset + 2] & 0xFF) << 8) |
                 (digest[offset + 3] & 0xFF);
 
-            Span<char> chars = stackalloc char[5];
+            var chars = new char[5];
             for (var i = 0; i < chars.Length; i++)
             {
                 chars[i] = CodeChars[codePoint % CodeChars.Length];
@@ -289,6 +299,66 @@ public sealed partial class SteamKitGateway
             }
 
             return new string(chars);
+        }
+
+        private static async Task<long> GetSteamUnixTimeAsync(bool forceResync)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var shouldResync = forceResync;
+            lock (TimeSyncLock)
+            {
+                shouldResync |= (now - _lastSyncAtUtc) > TimeSpan.FromMinutes(5) || _lastSyncAtUtc == DateTimeOffset.MinValue;
+            }
+
+            if (!shouldResync)
+            {
+                lock (TimeSyncLock)
+                {
+                    return now.ToUnixTimeSeconds() + _timeOffsetSeconds;
+                }
+            }
+
+            try
+            {
+                using var client = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(10)
+                };
+                using var content = new FormUrlEncodedContent(
+                [
+                    new KeyValuePair<string, string>("steamid", "0")
+                ]);
+                using var response = await client.PostAsync(
+                    "https://api.steampowered.com/ITwoFactorService/QueryTime/v1/",
+                    content).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+
+                var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var json = JsonDocument.Parse(raw);
+                if (json.RootElement.TryGetProperty("response", out var node) &&
+                    node.TryGetProperty("server_time", out var serverTimeNode) &&
+                    serverTimeNode.TryGetInt64(out var serverUnix))
+                {
+                    var offset = serverUnix - now.ToUnixTimeSeconds();
+                    lock (TimeSyncLock)
+                    {
+                        _timeOffsetSeconds = offset;
+                        _lastSyncAtUtc = now;
+                    }
+
+                    return serverUnix;
+                }
+            }
+            catch
+            {
+                // ignored; fall back to local clock and cached offset
+            }
+
+            lock (TimeSyncLock)
+            {
+                _lastSyncAtUtc = now;
+                return now.ToUnixTimeSeconds() + _timeOffsetSeconds;
+            }
         }
     }
 
@@ -301,16 +371,25 @@ public sealed partial class SteamKitGateway
             return Task.FromResult(_credentials.AllowDeviceConfirmation);
         }
 
-        public Task<string> GetDeviceCodeAsync(bool previousCodeWasIncorrect)
+        public async Task<string> GetDeviceCodeAsync(bool previousCodeWasIncorrect)
         {
             if (!previousCodeWasIncorrect && !string.IsNullOrWhiteSpace(_credentials.GuardCode))
             {
-                return Task.FromResult(_credentials.GuardCode!);
+                return _credentials.GuardCode!;
             }
 
             if (!string.IsNullOrWhiteSpace(_credentials.SharedSecret))
             {
-                return Task.FromResult(SteamGuardCodeGenerator.Generate(_credentials.SharedSecret!));
+                if (previousCodeWasIncorrect)
+                {
+                    // SDA compatibility: wait for next code window before re-trying.
+                    await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                }
+
+                return await SteamGuardCodeGenerator.GenerateAsync(
+                        _credentials.SharedSecret!,
+                        forceResync: previousCodeWasIncorrect)
+                    .ConfigureAwait(false);
             }
 
             throw new InvalidOperationException("Device code is required. Provide GuardCode or SharedSecret.");

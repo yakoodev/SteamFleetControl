@@ -270,6 +270,206 @@ public sealed class AccountsApiController(IAccountService accountService) : Cont
         }
     }
 
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
+    [EnableRateLimiting("sensitive")]
+    [HttpGet("{id:guid}/guard/confirmations")]
+    public async Task<ActionResult<GuardConfirmationsResultDto>> GetGuardConfirmations(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.GetGuardConfirmationsAsync(id, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/confirmations/{confirmationId:long}/{confirmationKey:long}/accept")]
+    public async Task<ActionResult<SteamOperationResult>> AcceptGuardConfirmation(
+        Guid id,
+        ulong confirmationId,
+        ulong confirmationKey,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.AcceptGuardConfirmationAsync(
+                id,
+                confirmationId,
+                confirmationKey,
+                ActorId,
+                ClientIp,
+                cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/confirmations/{confirmationId:long}/{confirmationKey:long}/deny")]
+    public async Task<ActionResult<SteamOperationResult>> DenyGuardConfirmation(
+        Guid id,
+        ulong confirmationId,
+        ulong confirmationKey,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.DenyGuardConfirmationAsync(
+                id,
+                confirmationId,
+                confirmationKey,
+                ActorId,
+                ClientIp,
+                cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/confirmations/accept-batch")]
+    public async Task<ActionResult<SteamOperationResult>> AcceptGuardConfirmationsBatch(
+        Guid id,
+        [FromBody] GuardConfirmationsBatchRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.AcceptGuardConfirmationsBatchAsync(
+                id,
+                request.Confirmations,
+                ActorId,
+                ClientIp,
+                cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/link/start")]
+    public async Task<ActionResult<GuardLinkStateDto>> StartGuardLink(
+        Guid id,
+        [FromBody] GuardLinkStartRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.StartGuardLinkAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/link/phone")]
+    public async Task<ActionResult<GuardLinkStateDto>> ProvideGuardPhone(
+        Guid id,
+        [FromBody] GuardLinkPhoneRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.ProvideGuardPhoneAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/link/finalize")]
+    public async Task<ActionResult<GuardLinkStateDto>> FinalizeGuardLink(
+        Guid id,
+        [FromBody] GuardLinkFinalizeRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.FinalizeGuardLinkAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return Ok(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
+    [EnableRateLimiting("sensitive")]
+    [HttpPost("{id:guid}/guard/remove")]
+    public async Task<ActionResult<SteamOperationResult>> RemoveAuthenticator(
+        Guid id,
+        [FromBody] RemoveAuthenticatorRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await accountService.RemoveAuthenticatorAsync(id, request, ActorId, ClientIp, cancellationToken);
+            return MapOperationResult(result);
+        }
+        catch (SteamGatewayOperationException ex)
+        {
+            return MapGatewayError(ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return MapInvalidOperationError(ex);
+        }
+    }
+
     [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     [EnableRateLimiting("sensitive")]
     [HttpPost("{id:guid}/password/change")]

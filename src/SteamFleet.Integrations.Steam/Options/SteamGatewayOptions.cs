@@ -12,4 +12,5 @@ public sealed class SteamGatewayOptions
     public int GuardRetryDelaySeconds { get; set; } = 30;
     public int MaxAuthFailuresBeforeCooldown { get; set; } = 3;
     public string UserAgent { get; set; } = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SteamFleet/1.0";
+    public string MobileUserAgent { get; set; } = "okhttp/3.12.12";
 }

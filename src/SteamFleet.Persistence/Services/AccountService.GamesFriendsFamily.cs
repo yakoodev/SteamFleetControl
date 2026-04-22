@@ -654,6 +654,28 @@ public sealed partial class AccountService
                 cancellationToken);
         }
 
+        if (!result.Success &&
+            string.Equals(result.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+        {
+            var autoAccepted = await TryAutoAcceptGuardConfirmationsAsync(
+                organizer,
+                sessionPayload,
+                actorId,
+                ip,
+                cancellationToken,
+                "family",
+                "invite",
+                "household");
+            if (autoAccepted)
+            {
+                result = await steamGateway.InviteToFamilyGroupAsync(
+                    sessionPayload,
+                    target.SteamId64,
+                    request.InviteAsChild,
+                    cancellationToken);
+            }
+        }
+
         if (!result.Success)
         {
             var transition = ApplyGatewayFailureState(organizer, result.ReasonCode, actorId);
@@ -791,6 +813,27 @@ public sealed partial class AccountService
                     sessionPayload,
                     sourceSteamId64,
                     cancellationToken);
+            }
+
+            if (!result.Success &&
+                string.Equals(result.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+            {
+                var autoAccepted = await TryAutoAcceptGuardConfirmationsAsync(
+                    account,
+                    sessionPayload,
+                    actorId,
+                    ip,
+                    cancellationToken,
+                    "family",
+                    "invite",
+                    "household");
+                if (autoAccepted)
+                {
+                    result = await steamGateway.AcceptFamilyInviteAsync(
+                        sessionPayload,
+                        sourceSteamId64,
+                        cancellationToken);
+                }
             }
 
             if (!result.Success)

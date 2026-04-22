@@ -9,6 +9,8 @@ public static class SteamReasonCodes
     public const string AuthThrottled = "AuthThrottled";
     public const string SessionReplaced = "SessionReplaced";
     public const string GuardPending = "GuardPending";
+    public const string GuardNotConfigured = "GuardNotConfigured";
+    public const string GuardLinkPending = "GuardLinkPending";
     public const string AntiBotBlocked = "AntiBotBlocked";
     public const string EndpointRejected = "EndpointRejected";
     public const string Timeout = "Timeout";

@@ -320,6 +320,43 @@ public sealed class NewFeaturesFlowTests
         Assert.Equal(1, await dbContext.SteamAccounts.CountAsync());
     }
 
+    [Fact]
+    public async Task GuardLink_And_Confirmations_Flow_Works()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var gateway = new FakeSteamGateway();
+        var accountService = new AccountService(dbContext, gateway, crypto, auditService);
+
+        var account = CreateAccount("guard-main", crypto);
+        account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
+        account.Secret.EncryptedIdentitySecret = crypto.Encrypt("identity-secret");
+        account.Secret.EncryptedDeviceId = crypto.Encrypt("android:test");
+        await dbContext.SteamAccounts.AddAsync(account);
+        await dbContext.SaveChangesAsync();
+
+        var start = await accountService.StartGuardLinkAsync(
+            account.Id,
+            new GuardLinkStartRequest(),
+            "itest",
+            "127.0.0.1");
+        Assert.True(start.Success);
+        Assert.Equal("NeedSmsCode", start.Step);
+
+        var finalize = await accountService.FinalizeGuardLinkAsync(
+            account.Id,
+            new GuardLinkFinalizeRequest { SmsCode = "12345" },
+            "itest",
+            "127.0.0.1");
+        Assert.True(finalize.Success);
+        Assert.Equal("Completed", finalize.Step);
+
+        var confirmations = await accountService.GetGuardConfirmationsAsync(account.Id, "itest", "127.0.0.1");
+        Assert.True(confirmations.Success);
+        Assert.Empty(confirmations.Confirmations);
+    }
+
     private static SteamFleetDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<SteamFleetDbContext>()
@@ -456,6 +493,89 @@ public sealed class NewFeaturesFlowTests
                 Success = !string.IsNullOrWhiteSpace(sessionPayload),
                 Data = new Dictionary<string, string> { ["deauthorized"] = true.ToString() }
             });
+
+        public Task<SteamGuardConfirmationsResult> GetConfirmationsAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardConfirmationsResult
+            {
+                Success = true,
+                Confirmations = []
+            });
+
+        public Task<SteamOperationResult> AcceptConfirmationAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            ulong confirmationId,
+            ulong confirmationKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamOperationResult> DenyConfirmationAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            ulong confirmationId,
+            ulong confirmationKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamOperationResult> AcceptConfirmationsBatchAsync(
+            string sessionPayload,
+            string identitySecret,
+            string deviceId,
+            IReadOnlyCollection<SteamGuardConfirmationRef> confirmations,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
+
+        public Task<SteamGuardLinkState> StartAuthenticatorLinkAsync(
+            string sessionPayload,
+            string? phoneNumber = null,
+            string? phoneCountryCode = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.NeedSmsCode,
+                SharedSecret = "shared",
+                IdentitySecret = "identity",
+                DeviceId = "android:test",
+                RevocationCode = "R12345"
+            });
+
+        public Task<SteamGuardLinkState> ProvidePhoneForLinkAsync(
+            string sessionPayload,
+            string phoneNumber,
+            string? phoneCountryCode = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.NeedEmailConfirmation,
+                PhoneNumberHint = phoneNumber
+            });
+
+        public Task<SteamGuardLinkState> FinalizeAuthenticatorLinkAsync(
+            string sessionPayload,
+            string sharedSecret,
+            string smsCode,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamGuardLinkState
+            {
+                Success = true,
+                Step = SteamGuardLinkStep.Completed,
+                FullyEnrolled = true
+            });
+
+        public Task<SteamOperationResult> RemoveAuthenticatorAsync(
+            string sessionPayload,
+            string revocationCode,
+            int scheme = 1,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new SteamOperationResult { Success = true, ReasonCode = SteamReasonCodes.None });
 
         public Task<SteamOwnedGamesSnapshot> GetOwnedGamesSnapshotAsync(string sessionPayload, CancellationToken cancellationToken = default)
         {

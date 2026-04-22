@@ -113,6 +113,30 @@ public sealed partial class AccountService
                 request.ConfirmationCode.Trim(),
                 pending.ConfirmationContext,
                 cancellationToken);
+            if (!pendingChangeResult.Success &&
+                string.Equals(pendingChangeResult.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+            {
+                var autoAccepted = await TryAutoAcceptGuardConfirmationsAsync(
+                    account,
+                    pendingSessionPayload,
+                    actorId,
+                    ip,
+                    cancellationToken,
+                    "password",
+                    "change",
+                    "security");
+                if (autoAccepted)
+                {
+                    pendingChangeResult = await steamGateway.ChangePasswordAsync(
+                        pendingSessionPayload,
+                        pendingCurrentPassword,
+                        pendingNextPassword,
+                        request.ConfirmationCode.Trim(),
+                        pending.ConfirmationContext,
+                        cancellationToken);
+                }
+            }
+
             if (!pendingChangeResult.Success)
             {
                 if (TryGetConfirmationContext(pendingChangeResult, out var updatedContext) &&
@@ -220,6 +244,28 @@ public sealed partial class AccountService
             currentPassword,
             nextPassword,
             cancellationToken: cancellationToken);
+        if (!changeResult.Success &&
+            string.Equals(changeResult.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+        {
+            var autoAccepted = await TryAutoAcceptGuardConfirmationsAsync(
+                account,
+                sessionPayload,
+                actorId,
+                ip,
+                cancellationToken,
+                "password",
+                "change",
+                "security");
+            if (autoAccepted)
+            {
+                changeResult = await steamGateway.ChangePasswordAsync(
+                    sessionPayload,
+                    currentPassword,
+                    nextPassword,
+                    cancellationToken: cancellationToken);
+            }
+        }
+
         if (!changeResult.Success)
         {
             if (string.Equals(changeResult.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
@@ -314,6 +360,24 @@ public sealed partial class AccountService
 
         var sessionPayload = await EnsureSessionPayloadAsync(account, actorId, ip, currentPassword: null, cancellationToken);
         var result = await steamGateway.DeauthorizeAllSessionsAsync(sessionPayload, cancellationToken);
+        if (!result.Success &&
+            string.Equals(result.ReasonCode, SteamReasonCodes.GuardPending, StringComparison.OrdinalIgnoreCase))
+        {
+            var autoAccepted = await TryAutoAcceptGuardConfirmationsAsync(
+                account,
+                sessionPayload,
+                actorId,
+                ip,
+                cancellationToken,
+                "deauthorize",
+                "session",
+                "device");
+            if (autoAccepted)
+            {
+                result = await steamGateway.DeauthorizeAllSessionsAsync(sessionPayload, cancellationToken);
+            }
+        }
+
         if (!result.Success)
         {
             var transition = ApplyGatewayFailureState(account, result.ReasonCode, actorId);

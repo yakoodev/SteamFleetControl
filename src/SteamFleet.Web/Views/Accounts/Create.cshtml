@@ -152,6 +152,7 @@
             const shared = document.getElementById("SharedSecret");
             const identity = document.getElementById("IdentitySecret");
             const login = document.getElementById("LoginName");
+            const recovery = document.getElementById("RecoveryPayload");
 
             if (!fileInput) {
                 return;
@@ -177,6 +178,10 @@
 
                     if (login && !login.value && typeof data.account_name === "string") {
                         login.value = data.account_name;
+                    }
+
+                    if (recovery && !recovery.value) {
+                        recovery.value = raw;
                     }
                 } catch {
                     alert("Не удалось распарсить maFile JSON. Проверьте формат файла.");

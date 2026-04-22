@@ -93,6 +93,7 @@ public sealed partial class JobService
         if (!string.IsNullOrWhiteSpace(auth.GuardData))
         {
             account.Secret.EncryptedRecoveryPayload = cryptoService.Encrypt(auth.GuardData);
+            BackfillGuardSecretFieldsFromPayload(account.Secret, auth.GuardData);
         }
 
         account.Secret.EncryptionVersion = cryptoService.Version;
@@ -245,6 +246,50 @@ public sealed partial class JobService
         }
 
         return new string(password);
+    }
+
+    private void BackfillGuardSecretFieldsFromPayload(SteamAccountSecret secret, string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(payload) is not JsonObject node)
+            {
+                return;
+            }
+
+            void SetIfPresent(string field, Action<string> setter)
+            {
+                var raw = node[field]?.GetValue<string?>();
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    setter(raw.Trim());
+                }
+            }
+
+            SetIfPresent("device_id", x => secret.EncryptedDeviceId = cryptoService.Encrypt(x));
+            SetIfPresent("revocation_code", x => secret.EncryptedRevocationCode = cryptoService.Encrypt(x));
+            SetIfPresent("serial_number", x => secret.EncryptedSerialNumber = cryptoService.Encrypt(x));
+            SetIfPresent("token_gid", x => secret.EncryptedTokenGid = cryptoService.Encrypt(x));
+            SetIfPresent("uri", x => secret.EncryptedUri = cryptoService.Encrypt(x));
+            SetIfPresent("identity_secret", x => secret.EncryptedIdentitySecret = cryptoService.Encrypt(x));
+            SetIfPresent("shared_secret", x => secret.EncryptedSharedSecret = cryptoService.Encrypt(x));
+            if (node["fully_enrolled"] is JsonValue enrolledNode)
+            {
+                if (enrolledNode.TryGetValue<bool>(out var enrolled))
+                {
+                    secret.GuardFullyEnrolled = enrolled;
+                }
+            }
+        }
+        catch
+        {
+            // ignore malformed legacy payloads
+        }
     }
 
     private static List<FriendPair> ParseFriendPairs(string? raw)

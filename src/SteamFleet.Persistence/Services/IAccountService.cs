@@ -21,6 +21,14 @@ public interface IAccountService
     Task CancelQrAuthenticationAsync(Guid id, Guid flowId, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamSessionValidationResult> ValidateSessionAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamSessionInfo> RefreshSessionAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<GuardConfirmationsResultDto> GetGuardConfirmationsAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptGuardConfirmationAsync(Guid id, ulong confirmationId, ulong confirmationKey, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> DenyGuardConfirmationAsync(Guid id, ulong confirmationId, ulong confirmationKey, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> AcceptGuardConfirmationsBatchAsync(Guid id, IReadOnlyCollection<GuardConfirmationRefDto> confirmations, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<GuardLinkStateDto> StartGuardLinkAsync(Guid id, GuardLinkStartRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<GuardLinkStateDto> ProvideGuardPhoneAsync(Guid id, GuardLinkPhoneRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<GuardLinkStateDto> FinalizeGuardLinkAsync(Guid id, GuardLinkFinalizeRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
+    Task<SteamOperationResult> RemoveAuthenticatorAsync(Guid id, RemoveAuthenticatorRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<AccountPasswordChangeResult> ChangePasswordAsync(Guid id, AccountPasswordChangeRequest request, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<SteamOperationResult> DeauthorizeAllSessionsAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);
     Task<AccountGamesPageResult> RefreshGamesAsync(Guid id, string actorId, string? ip, CancellationToken cancellationToken = default);

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ using SteamFleet.Contracts.Enums;
 using SteamFleet.Contracts.Steam;
 using SteamFleet.Domain.Entities;
 using SteamFleet.Persistence.Helpers;
+using SteamFleet.Persistence.Security;
 
 namespace SteamFleet.Persistence.Services;
 
@@ -186,6 +188,7 @@ public sealed partial class AccountService
         if (!string.IsNullOrWhiteSpace(request.RecoveryPayload))
         {
             account.Secret.EncryptedRecoveryPayload = cryptoService.Encrypt(request.RecoveryPayload);
+            BackfillGuardSecretFieldsFromPayload(account.Secret, request.RecoveryPayload, cryptoService);
         }
 
         account.Secret.EncryptionVersion = cryptoService.Version;
@@ -321,6 +324,7 @@ public sealed partial class AccountService
         if (!string.IsNullOrWhiteSpace(authResult.GuardData))
         {
             account.Secret.EncryptedRecoveryPayload = cryptoService.Encrypt(authResult.GuardData);
+            BackfillGuardSecretFieldsFromPayload(account.Secret, authResult.GuardData, cryptoService);
         }
 
         account.Secret.EncryptionVersion = cryptoService.Version;
@@ -351,6 +355,61 @@ public sealed partial class AccountService
             ip,
             new Dictionary<string, string> { ["operation"] = "authenticate" },
             cancellationToken);
+    }
+
+    private static void BackfillGuardSecretFieldsFromPayload(
+        SteamAccountSecret secret,
+        string payload,
+        ISecretCryptoService crypto)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(payload) is not JsonObject node)
+            {
+                return;
+            }
+
+            SetIfPresent(node, "device_id", x => secret.EncryptedDeviceId = crypto.Encrypt(x));
+            SetIfPresent(node, "revocation_code", x => secret.EncryptedRevocationCode = crypto.Encrypt(x));
+            SetIfPresent(node, "serial_number", x => secret.EncryptedSerialNumber = crypto.Encrypt(x));
+            SetIfPresent(node, "token_gid", x => secret.EncryptedTokenGid = crypto.Encrypt(x));
+            SetIfPresent(node, "uri", x => secret.EncryptedUri = crypto.Encrypt(x));
+            SetIfPresent(node, "shared_secret", x => secret.EncryptedSharedSecret = crypto.Encrypt(x));
+            SetIfPresent(node, "identity_secret", x => secret.EncryptedIdentitySecret = crypto.Encrypt(x));
+
+            if (node["fully_enrolled"] is JsonValue enrolledNode)
+            {
+                if (enrolledNode.TryGetValue<bool>(out var enrolled))
+                {
+                    secret.GuardFullyEnrolled = enrolled;
+                }
+                else if (enrolledNode.TryGetValue<string>(out var enrolledText) &&
+                         bool.TryParse(enrolledText, out var parsed))
+                {
+                    secret.GuardFullyEnrolled = parsed;
+                }
+            }
+        }
+        catch
+        {
+            // ignored: payload can be non-JSON on legacy records
+        }
+    }
+
+    private static void SetIfPresent(JsonObject node, string key, Action<string> setter)
+    {
+        var raw = node[key]?.GetValue<string?>();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return;
+        }
+
+        setter(raw.Trim());
     }
 
     private async Task<List<AccountUpsertRequest>> ParseImportAsync(Stream stream, string fileName, CancellationToken cancellationToken)

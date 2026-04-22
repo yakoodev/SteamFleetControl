@@ -75,8 +75,15 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
             entity.Property(x => x.EncryptedPassword).HasColumnType("text");
             entity.Property(x => x.EncryptedSharedSecret).HasColumnType("text");
             entity.Property(x => x.EncryptedIdentitySecret).HasColumnType("text");
+            entity.Property(x => x.EncryptedDeviceId).HasColumnType("text");
+            entity.Property(x => x.EncryptedRevocationCode).HasColumnType("text");
+            entity.Property(x => x.EncryptedSerialNumber).HasColumnType("text");
+            entity.Property(x => x.EncryptedTokenGid).HasColumnType("text");
+            entity.Property(x => x.EncryptedUri).HasColumnType("text");
+            entity.Property(x => x.EncryptedLinkStatePayload).HasColumnType("text");
             entity.Property(x => x.EncryptedSessionPayload).HasColumnType("text");
             entity.Property(x => x.EncryptedRecoveryPayload).HasColumnType("text");
+            entity.Property(x => x.GuardFullyEnrolled);
             entity.Property(x => x.EncryptionVersion).HasMaxLength(64).IsRequired();
             entity.HasOne(x => x.Account)
                 .WithOne(x => x.Secret)

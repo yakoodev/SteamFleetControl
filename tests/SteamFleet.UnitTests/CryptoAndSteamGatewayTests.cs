@@ -274,4 +274,34 @@ public sealed class CryptoAndSteamGatewayTests
         Assert.True(parsed);
         Assert.Equal("abcd1234", Assert.IsType<string>(args[1]));
     }
+
+    [Fact]
+    public void SteamGateway_Generates_SteamGuard_Code_SdaParity_Vector()
+    {
+        var nested = typeof(SteamKitGateway).GetNestedType("SteamGuardCodeGenerator", BindingFlags.NonPublic);
+        Assert.NotNull(nested);
+
+        var method = nested!.GetMethod(
+            "GenerateForUnixTime",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var code = (string)method!.Invoke(null, ["MDEyMzQ1Njc4OUFCQ0RFRg==", 1700000000L])!;
+        Assert.Equal("5XR77", code);
+    }
+
+    [Theory]
+    [InlineData("conf", "m3ndpWz6aqlyQ/fA5spbV2NHwdQ=")]
+    [InlineData("accept", "Qqfcxnx9LLJ94I4UfdfVJGcsxM4=")]
+    [InlineData("reject", "JHdVSnqGCNjc8S0Bq82U37KsFPQ=")]
+    public void SteamGateway_Generates_ConfirmationHash_SdaParity_Vector(string tag, string expected)
+    {
+        var method = typeof(SteamKitGateway).GetMethod(
+            "GenerateConfirmationHashForTime",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var hash = (string)method!.Invoke(null, ["MDEyMzQ1Njc4OUFCQ0RFRg==", 1700000000L, tag])!;
+        Assert.Equal(expected, hash);
+    }
 }

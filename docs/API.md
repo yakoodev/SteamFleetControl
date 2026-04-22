@@ -31,6 +31,14 @@ Steam/session actions:
 Security/family/games/friends:
 - `POST /api/accounts/{id}/password/change`
 - `POST /api/accounts/{id}/sessions/deauthorize`
+- `GET /api/accounts/{id}/guard/confirmations`
+- `POST /api/accounts/{id}/guard/confirmations/{confirmationId}/{confirmationKey}/accept`
+- `POST /api/accounts/{id}/guard/confirmations/{confirmationId}/{confirmationKey}/deny`
+- `POST /api/accounts/{id}/guard/confirmations/accept-batch`
+- `POST /api/accounts/{id}/guard/link/start`
+- `POST /api/accounts/{id}/guard/link/phone`
+- `POST /api/accounts/{id}/guard/link/finalize`
+- `POST /api/accounts/{id}/guard/remove`
 - `POST /api/accounts/{id}/games/refresh`
 - `GET /api/accounts/{id}/games?scope=owned|family|all&q=&page=&pageSize=`
 - `POST /api/accounts/{id}/family/sync`

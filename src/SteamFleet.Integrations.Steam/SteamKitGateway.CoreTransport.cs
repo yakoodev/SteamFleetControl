@@ -1485,6 +1485,8 @@ public sealed partial class SteamKitGateway
             $"steamLoginSecure={loginValue}; path=/; secure",
             $"steamLogin={loginValue}; path=/; secure",
             $"sessionid={bundle.SessionId}; path=/; secure",
+            "mobileClient=android; path=/",
+            "mobileClientVersion=777777 3.6.1; path=/",
             "Steam_Language=english; path=/",
             "timezoneOffset=0,0; path=/"
         };
@@ -1889,6 +1891,8 @@ public sealed partial class SteamKitGateway
             $"steamLoginSecure={loginValue}",
             $"steamLogin={loginValue}",
             $"sessionid={bundle.SessionId}",
+            "mobileClient=android",
+            "mobileClientVersion=777777 3.6.1",
             "Steam_Language=english",
             "timezoneOffset=0,0");
     }
