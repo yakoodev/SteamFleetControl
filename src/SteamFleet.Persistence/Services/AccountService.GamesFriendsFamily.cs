@@ -663,9 +663,9 @@ public sealed partial class AccountService
                 actorId,
                 ip,
                 cancellationToken,
-                "family",
-                "invite",
-                "household");
+                operation: "family_invite_send",
+                relevanceKeywords: ["family", "invite", "household"],
+                expectedCreatorSteamIds: [organizer.SteamId64, target.SteamId64]);
             if (autoAccepted)
             {
                 result = await steamGateway.InviteToFamilyGroupAsync(
@@ -824,9 +824,9 @@ public sealed partial class AccountService
                     actorId,
                     ip,
                     cancellationToken,
-                    "family",
-                    "invite",
-                    "household");
+                    operation: "family_invite_accept",
+                    relevanceKeywords: ["family", "invite", "household"],
+                    expectedCreatorSteamIds: [account.SteamId64, sourceSteamId64]);
                 if (autoAccepted)
                 {
                     result = await steamGateway.AcceptFamilyInviteAsync(

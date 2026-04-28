@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +13,10 @@ namespace SteamFleet.Persistence.Services;
 public sealed partial class AccountService
 {
     private const string GuardLinkStateMetadataKey = "guard.link.state";
+    private const string GuardLinkStateUpdatedAtField = "UpdatedAtUtc";
+    private const string GuardLinkStateExpiresAtField = "ExpiresAtUtc";
+    private static readonly TimeSpan GuardLinkStateTtl = TimeSpan.FromMinutes(30);
+    private const int GuardAutoAcceptMinKeywordMatches = 2;
 
     public async Task<GuardConfirmationsResultDto> GetGuardConfirmationsAsync(
         Guid id,
@@ -170,6 +175,7 @@ public sealed partial class AccountService
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
         await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+        await EnsureGuardLinkStateNotExpiredAsync(account, actorId, ip, cancellationToken);
 
         var sessionPayload = await EnsureSessionPayloadAsync(account, actorId, ip, currentPassword: null, cancellationToken);
         var result = await steamGateway.StartAuthenticatorLinkAsync(
@@ -209,6 +215,7 @@ public sealed partial class AccountService
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
         await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+        await EnsureGuardLinkStateNotExpiredAsync(account, actorId, ip, cancellationToken);
 
         var sessionPayload = await EnsureSessionPayloadAsync(account, actorId, ip, currentPassword: null, cancellationToken);
         var result = await steamGateway.ProvidePhoneForLinkAsync(
@@ -248,6 +255,7 @@ public sealed partial class AccountService
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw new InvalidOperationException("Account not found.");
         await ApplySensitivePrecheckAsync(account, automated: false, cancellationToken);
+        await EnsureGuardLinkStateNotExpiredAsync(account, actorId, ip, cancellationToken);
 
         var sharedSecret = await ResolveSharedSecretForFinalizeAsync(account, actorId, ip, cancellationToken);
         if (string.IsNullOrWhiteSpace(sharedSecret))
@@ -341,6 +349,11 @@ public sealed partial class AccountService
         account.Secret.GuardFullyEnrolled = false;
         account.Secret.EncryptionVersion = cryptoService.Version;
         account.UpdatedBy = actorId;
+
+        var metadata = JsonSerialization.DeserializeDictionary(account.MetadataJson);
+        metadata.Remove(GuardLinkStateMetadataKey);
+        account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
+
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await auditService.WriteAsync(
@@ -481,19 +494,40 @@ public sealed partial class AccountService
         CancellationToken cancellationToken)
     {
         account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
-        var shared = await ReadSecretAsync(account, account.Secret.EncryptedSharedSecret, "shared_secret", actorId, ip, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(shared))
+        var linkPayload = await ReadSecretAsync(account, account.Secret.EncryptedLinkStatePayload, "guard_link_state", actorId, ip, cancellationToken);
+        if (string.IsNullOrWhiteSpace(linkPayload))
         {
-            return shared;
+            return null;
         }
 
-        var linkPayload = await ReadSecretAsync(account, account.Secret.EncryptedLinkStatePayload, "guard_link_state", actorId, ip, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = TryReadGuardDateTimeFromPayload(linkPayload, GuardLinkStateExpiresAtField);
+        if (expiresAt is null &&
+            account.Secret.UpdatedAt < now.Subtract(GuardLinkStateTtl))
+        {
+            expiresAt = account.Secret.UpdatedAt.Add(GuardLinkStateTtl);
+        }
+
+        if (expiresAt is not null && expiresAt <= now)
+        {
+            account.Secret.EncryptedLinkStatePayload = null;
+            account.Secret.EncryptionVersion = cryptoService.Version;
+            var metadata = JsonSerialization.DeserializeDictionary(account.MetadataJson);
+            metadata.Remove(GuardLinkStateMetadataKey);
+            account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return null;
+        }
+
         if (TryReadGuardFieldFromPayload(linkPayload, "SharedSecret", out var fromLink))
         {
             return fromLink;
         }
 
-        return null;
+        var shared = await ReadSecretAsync(account, account.Secret.EncryptedSharedSecret, "shared_secret", actorId, ip, cancellationToken);
+        return string.IsNullOrWhiteSpace(shared)
+            ? null
+            : shared;
     }
 
     private async Task<string?> ResolveRevocationCodeAsync(
@@ -516,6 +550,63 @@ public sealed partial class AccountService
         }
 
         return null;
+    }
+
+    private async Task EnsureGuardLinkStateNotExpiredAsync(
+        SteamAccount account,
+        string actorId,
+        string? ip,
+        CancellationToken cancellationToken)
+    {
+        account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
+        var linkPayload = await ReadSecretAsync(
+            account,
+            account.Secret.EncryptedLinkStatePayload,
+            "guard_link_state",
+            actorId,
+            ip,
+            cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(linkPayload))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = TryReadGuardDateTimeFromPayload(linkPayload, GuardLinkStateExpiresAtField);
+        if (expiresAt is null &&
+            account.Secret.UpdatedAt < now.Subtract(GuardLinkStateTtl))
+        {
+            expiresAt = account.Secret.UpdatedAt.Add(GuardLinkStateTtl);
+        }
+
+        if (expiresAt is null || expiresAt > now)
+        {
+            return;
+        }
+
+        account.Secret.EncryptedLinkStatePayload = null;
+        account.Secret.EncryptionVersion = cryptoService.Version;
+        account.UpdatedBy = actorId;
+
+        var metadata = JsonSerialization.DeserializeDictionary(account.MetadataJson);
+        metadata.Remove(GuardLinkStateMetadataKey);
+        account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditService.WriteAsync(
+            AuditEventType.SecretUpdated,
+            "steam_account_secret",
+            account.Id.ToString(),
+            actorId,
+            ip,
+            new Dictionary<string, string>
+            {
+                ["operation"] = "guard_link_state_expired_cleanup",
+                ["expiredAt"] = expiresAt.Value.ToString("O", CultureInfo.InvariantCulture)
+            },
+            cancellationToken);
     }
 
     private async Task ApplyGuardLinkStateAsync(
@@ -574,8 +665,12 @@ public sealed partial class AccountService
         }
         else
         {
+            var now = DateTimeOffset.UtcNow;
+            var expiresAt = now.Add(GuardLinkStateTtl);
             var linkPayload = new JsonObject
             {
+                [GuardLinkStateUpdatedAtField] = now.ToString("O", CultureInfo.InvariantCulture),
+                [GuardLinkStateExpiresAtField] = expiresAt.ToString("O", CultureInfo.InvariantCulture),
                 ["Step"] = state.Step.ToString(),
                 ["Success"] = state.Success,
                 ["ErrorMessage"] = state.ErrorMessage,
@@ -604,7 +699,15 @@ public sealed partial class AccountService
         account.UpdatedBy = actorId;
 
         var metadata = JsonSerialization.DeserializeDictionary(account.MetadataJson);
-        metadata[GuardLinkStateMetadataKey] = state.Step.ToString();
+        if (state.Success && state.Step == SteamGuardLinkStep.Completed)
+        {
+            metadata.Remove(GuardLinkStateMetadataKey);
+        }
+        else
+        {
+            metadata[GuardLinkStateMetadataKey] = state.Step.ToString();
+        }
+
         account.MetadataJson = JsonSerialization.SerializeDictionary(metadata);
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -684,13 +787,44 @@ public sealed partial class AccountService
         }
     }
 
+    private static DateTimeOffset? TryReadGuardDateTimeFromPayload(string? payload, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(payload) is not JsonObject node)
+            {
+                return null;
+            }
+
+            if (node[fieldName]?.GetValue<string?>() is not { } raw || string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            return DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+                ? parsed
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<bool> TryAutoAcceptGuardConfirmationsAsync(
         SteamAccount account,
         string sessionPayload,
         string actorId,
         string? ip,
         CancellationToken cancellationToken,
-        params string[] relevanceKeywords)
+        string operation,
+        IReadOnlyCollection<string> relevanceKeywords,
+        IReadOnlyCollection<string?> expectedCreatorSteamIds)
     {
         var guardSecrets = await ResolveGuardSecretsAsync(account, actorId, ip, cancellationToken);
         if (string.IsNullOrWhiteSpace(guardSecrets.IdentitySecret) || string.IsNullOrWhiteSpace(guardSecrets.DeviceId))
@@ -708,19 +842,39 @@ public sealed partial class AccountService
             return false;
         }
 
-        IReadOnlyCollection<SteamGuardConfirmation> candidates = list.Confirmations;
-        if (relevanceKeywords.Length > 0)
+        var normalizedKeywords = relevanceKeywords
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var expectedCreatorIds = new HashSet<ulong>();
+        foreach (var expected in expectedCreatorSteamIds)
         {
-            var normalizedKeywords = relevanceKeywords
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.Trim())
-                .ToArray();
-            candidates = list.Confirmations
-                .Where(x => MatchesConfirmationByKeywords(x, normalizedKeywords))
-                .ToArray();
+            if (string.IsNullOrWhiteSpace(expected))
+            {
+                continue;
+            }
+
+            if (ulong.TryParse(expected.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var creatorId))
+            {
+                expectedCreatorIds.Add(creatorId);
+            }
         }
 
-        if (candidates.Count == 0)
+        if (expectedCreatorIds.Count == 0)
+        {
+            return false;
+        }
+
+        var requiredMatches = normalizedKeywords.Length == 0
+            ? 0
+            : Math.Min(GuardAutoAcceptMinKeywordMatches, normalizedKeywords.Length);
+        var candidates = list.Confirmations
+            .Where(x => IsConfirmationRelevantForAutoAccept(x, normalizedKeywords, expectedCreatorIds, requiredMatches))
+            .ToArray();
+
+        if (candidates.Length == 0)
         {
             return false;
         }
@@ -752,29 +906,58 @@ public sealed partial class AccountService
             new Dictionary<string, string>
             {
                 ["operation"] = "guard_auto_accept",
-                ["accepted"] = candidates.Count.ToString()
+                ["scope"] = operation,
+                ["accepted"] = candidates.Length.ToString(),
+                ["fetched"] = list.Confirmations.Count.ToString()
             },
             cancellationToken);
 
         return true;
     }
 
-    private static bool MatchesConfirmationByKeywords(SteamGuardConfirmation confirmation, IReadOnlyList<string> keywords)
+    private static bool IsConfirmationRelevantForAutoAccept(
+        SteamGuardConfirmation confirmation,
+        IReadOnlyList<string> keywords,
+        IReadOnlySet<ulong> expectedCreatorIds,
+        int requiredMatches)
     {
-        if (keywords.Count == 0)
+        if (confirmation.Type is SteamGuardConfirmationType.Trade or SteamGuardConfirmationType.MarketListing)
+        {
+            return false;
+        }
+
+        if (confirmation.CreatorId == 0 || !expectedCreatorIds.Contains(confirmation.CreatorId))
+        {
+            return false;
+        }
+
+        if (keywords.Count == 0 || requiredMatches <= 0)
         {
             return true;
         }
 
-        var haystack = string.Join(
+        var haystack = BuildConfirmationSearchText(confirmation);
+        if (string.IsNullOrWhiteSpace(haystack))
+        {
+            return false;
+        }
+
+        var matchCount = keywords.Count(keyword =>
+            haystack.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        return matchCount >= requiredMatches;
+    }
+
+    private static string BuildConfirmationSearchText(SteamGuardConfirmation confirmation)
+    {
+        return string.Join(
             '\n',
             new[]
             {
                 confirmation.Headline ?? string.Empty,
-                string.Join('\n', confirmation.Summary)
+                string.Join('\n', confirmation.Summary),
+                confirmation.AcceptText ?? string.Empty,
+                confirmation.CancelText ?? string.Empty
             });
-
-        return keywords.Any(keyword => haystack.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     private static SteamOperationResult Failure(string message, string reasonCode, bool retryable = false)

@@ -122,9 +122,9 @@ public sealed partial class AccountService
                     actorId,
                     ip,
                     cancellationToken,
-                    "password",
-                    "change",
-                    "security");
+                    operation: "password_change",
+                    relevanceKeywords: ["password", "change", "security"],
+                    expectedCreatorSteamIds: [account.SteamId64]);
                 if (autoAccepted)
                 {
                     pendingChangeResult = await steamGateway.ChangePasswordAsync(
@@ -253,9 +253,9 @@ public sealed partial class AccountService
                 actorId,
                 ip,
                 cancellationToken,
-                "password",
-                "change",
-                "security");
+                operation: "password_change",
+                relevanceKeywords: ["password", "change", "security"],
+                expectedCreatorSteamIds: [account.SteamId64]);
             if (autoAccepted)
             {
                 changeResult = await steamGateway.ChangePasswordAsync(
@@ -369,9 +369,9 @@ public sealed partial class AccountService
                 actorId,
                 ip,
                 cancellationToken,
-                "deauthorize",
-                "session",
-                "device");
+                operation: "deauthorize_sessions",
+                relevanceKeywords: ["deauthorize", "session", "device"],
+                expectedCreatorSteamIds: [account.SteamId64]);
             if (autoAccepted)
             {
                 result = await steamGateway.DeauthorizeAllSessionsAsync(sessionPayload, cancellationToken);

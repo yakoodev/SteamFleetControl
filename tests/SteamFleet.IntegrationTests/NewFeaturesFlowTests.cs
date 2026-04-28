@@ -357,6 +357,45 @@ public sealed class NewFeaturesFlowTests
         Assert.Empty(confirmations.Confirmations);
     }
 
+    [Fact]
+    public async Task GuardFinalize_ExpiredLinkState_IsCleanedAndSkipped()
+    {
+        await using var dbContext = CreateDbContext();
+        var crypto = CreateCrypto();
+        var auditService = new AuditService(dbContext);
+        var gateway = new FakeSteamGateway();
+        var accountService = new AccountService(dbContext, gateway, crypto, auditService);
+
+        var account = CreateAccount("guard-expired", crypto);
+        account.Secret ??= new SteamAccountSecret { AccountId = account.Id };
+        account.Secret.EncryptedSharedSecret = crypto.Encrypt("old-shared-secret");
+        account.Secret.EncryptedLinkStatePayload = crypto.Encrypt($$"""
+            {
+              "Step": "NeedSmsCode",
+              "SharedSecret": "stale-shared",
+              "ExpiresAtUtc": "{{DateTimeOffset.UtcNow.AddHours(-2):O}}"
+            }
+            """);
+        await dbContext.SteamAccounts.AddAsync(account);
+        await dbContext.SaveChangesAsync();
+
+        var finalize = await accountService.FinalizeGuardLinkAsync(
+            account.Id,
+            new GuardLinkFinalizeRequest { SmsCode = "12345" },
+            "itest",
+            "127.0.0.1");
+
+        Assert.False(finalize.Success);
+        Assert.Equal("Failed", finalize.Step);
+        Assert.Equal(SteamReasonCodes.GuardNotConfigured, finalize.ReasonCode);
+        Assert.Equal(0, gateway.FinalizeLinkCalls);
+
+        var refreshed = await dbContext.SteamAccounts
+            .Include(x => x.Secret)
+            .SingleAsync(x => x.Id == account.Id);
+        Assert.Null(refreshed.Secret!.EncryptedLinkStatePayload);
+    }
+
     private static SteamFleetDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<SteamFleetDbContext>()
@@ -395,6 +434,7 @@ public sealed class NewFeaturesFlowTests
     private sealed class FakeSteamGateway : ISteamAccountGateway
     {
         public Dictionary<string, SteamOwnedGamesSnapshot> Snapshots { get; } = new(StringComparer.Ordinal);
+        public int FinalizeLinkCalls { get; private set; }
         public SteamQrAuthPollResult NextQrPollResult { get; set; } = new()
         {
             Status = SteamQrAuthStatus.Completed,
@@ -563,12 +603,15 @@ public sealed class NewFeaturesFlowTests
             string sharedSecret,
             string smsCode,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(new SteamGuardLinkState
+        {
+            FinalizeLinkCalls++;
+            return Task.FromResult(new SteamGuardLinkState
             {
                 Success = true,
                 Step = SteamGuardLinkStep.Completed,
                 FullyEnrolled = true
             });
+        }
 
         public Task<SteamOperationResult> RemoveAuthenticatorAsync(
             string sessionPayload,
