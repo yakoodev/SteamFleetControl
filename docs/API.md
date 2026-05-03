@@ -73,17 +73,53 @@ Security/family/games/friends:
 - `GET /api/audit-events`
 - `GET /api/audit-events/{id}`
 
-## Internal DDCRM Integration API
-- `POST /internal/v1/ddcrm/project-tokens/upsert`
-- `POST /internal/v1/ddcrm/project-tokens/revoke`
-- `POST /internal/v1/ddcrm/integration/read`
-- `POST /internal/v1/ddcrm/integration/jobs`
+## Internal Worker Adapter API (DDCRM integration runtime)
+- `GET /internal/v2/worker/health`
+- `GET /internal/v2/worker/capabilities`
+- `GET /internal/v2/worker/account`
+- `POST /internal/v2/worker/actions/{action}`
+
+Поддерживаемые action:
+- `ext.integration.steam.read`
+- `ext.integration.steam.jobs`
+- `ext.account.proxy-credentials.apply` (no-op, для bootstrap совместимости)
+
+Контракт `POST /internal/v2/worker/actions/{action}`:
+- тело: `{ "payload": { ... } }` (`payload` обязателен, JSON object);
+- успешный ответ: `{ "requestId": "...", "result": { ... } }`;
+- ошибки валидации action/payload: `400` c `error=validation_failed`.
+
+`ext.integration.steam.read` (`payload.operation`):
+- `accounts.list` — параметры: `query?`, `status?`, `page?`, `pageSize?`;
+- `accounts.get` — параметры: `accountId` (GUID);
+- `jobs.list` — параметры: `take?`;
+- `jobs.details` — параметры: `jobId` (GUID).
+
+`ext.integration.steam.jobs` (`payload.operation`):
+- `accounts.create` — параметры: `account` (`AccountUpsertRequest`);
+- `accounts.update` — параметры: `accountId` (GUID), `account` (`AccountUpsertRequest`);
+- `accounts.archive` — параметры: `accountId` (GUID);
+- `jobs.create` — параметры: `job` (`JobCreateRequest`);
+- `jobs.cancel` — параметры: `jobId` (GUID).
+
+Пример `accounts.create`:
+```json
+{
+  "payload": {
+    "operation": "accounts.create",
+    "account": {
+      "loginName": "steam_login",
+      "displayName": "Steam Account",
+      "status": "Active"
+    }
+  }
+}
+```
 
 Требования:
-- обязательный `X-Service-Token` (DDCRM service-auth);
-- для invoke дополнительно обязательный `X-Project-Service-Token`;
-- scope строго allowlisted (`read` / `jobs`);
-- deny по grant/scope/token логируется.
+- обязательный `X-Service-Token` (`WORKER_API_SERVICE_AUTH_ACCEPTED_TOKENS`);
+- legacy DDCRM service-token API `/internal/v1/ddcrm/*` деактивирован (410 Gone);
+- runtime изоляция задаётся через env scope (`DDCRM_WORKER_ACCOUNT_ID`, `DDCRM_WORKER_PROJECT_ID`, `STEAM_ACCOUNTS_STORAGE_NAMESPACE`).
 
 ## Notes
 - Check Swagger for the latest DTO schema and examples.

@@ -182,6 +182,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Accounts}/{action=Index}/{id?}");
+app.MapControllers();
 app.MapGet("/", () => Results.Redirect("/auth/login", permanent: false)).AllowAnonymous();
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "SteamFleet.Web" })).AllowAnonymous();
 
