@@ -73,6 +73,18 @@ Security/family/games/friends:
 - `GET /api/audit-events`
 - `GET /api/audit-events/{id}`
 
+## Internal DDCRM Integration API
+- `POST /internal/v1/ddcrm/project-tokens/upsert`
+- `POST /internal/v1/ddcrm/project-tokens/revoke`
+- `POST /internal/v1/ddcrm/integration/read`
+- `POST /internal/v1/ddcrm/integration/jobs`
+
+Требования:
+- обязательный `X-Service-Token` (DDCRM service-auth);
+- для invoke дополнительно обязательный `X-Project-Service-Token`;
+- scope строго allowlisted (`read` / `jobs`);
+- deny по grant/scope/token логируется.
+
 ## Notes
 - Check Swagger for the latest DTO schema and examples.
 - Sensitive endpoints require proper role and are rate-limited.

@@ -20,6 +20,7 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SteamAccountGame> SteamAccountGames => Set<SteamAccountGame>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<DdcrmProjectToken> DdcrmProjectTokens => Set<DdcrmProjectToken>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -191,6 +192,16 @@ public sealed class SteamFleetDbContext(DbContextOptions<SteamFleetDbContext> op
             entity.Property(x => x.Key).HasMaxLength(128).IsRequired();
             entity.Property(x => x.ValueJson).HasColumnType("jsonb").HasDefaultValue("{}");
             entity.HasIndex(x => x.Key).IsUnique();
+        });
+
+        builder.Entity<DdcrmProjectToken>(entity =>
+        {
+            entity.ToTable("ddcrm_project_tokens");
+            entity.Property(x => x.TokenHashSha256).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ScopesCsv).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.Status).HasMaxLength(24).IsRequired();
+            entity.HasIndex(x => x.ProjectId).IsUnique();
+            entity.HasIndex(x => x.Status);
         });
 
         builder.Entity<AppUser>().ToTable("users");
