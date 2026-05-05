@@ -40,9 +40,9 @@ QR onboarding:
 3. Scan the QR code in Steam Guard mobile app.
 4. After approval, the service auto-creates the account and redirects to details.
 
-Default local admin:
-- Email: `admin@local`
-- Password: `Admin1234`
+Optional SuperAdmin bootstrap:
+- Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` if you want startup bootstrap to create/promote a SuperAdmin.
+- If both variables are empty, admin bootstrap is skipped.
 
 ## Environment Variables
 See [.env.example](.env.example):

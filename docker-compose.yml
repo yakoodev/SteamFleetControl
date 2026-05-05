@@ -49,8 +49,8 @@ services:
       ConnectionStrings__Redis: redis:6379
       POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
       REDIS_CONNECTION: redis:6379
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       SECRETS_MASTER_KEY_B64: ${SECRETS_MASTER_KEY_B64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
     ports:
       - "8080:8080"
@@ -73,8 +73,8 @@ services:
       POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=steamfleet;Username=steamfleet;Password=steamfleet
       ConnectionStrings__Redis: redis:6379
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       SECRETS_MASTER_KEY_B64: ${SECRETS_MASTER_KEY_B64:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
       WORKER_COUNT: ${WORKER_COUNT:-10}
 
